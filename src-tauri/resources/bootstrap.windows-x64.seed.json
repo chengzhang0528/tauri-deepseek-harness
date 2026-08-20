@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "product": "atlas-dsh-desktop",
+  "platform": "windows",
+  "arch": "x64",
+  "release": "0.1.0",
+  "minimumLauncher": "0.1.0",
+  "manifest": {
+    "objectKey": "releases/0.1.0/windows-x64/manifest.json",
+    "bytes": 0,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

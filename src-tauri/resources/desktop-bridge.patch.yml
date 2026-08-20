@@ -1,0 +1,2 @@
+- id: dsh-desktop-bridge
+  name: ./desktop-bridge.mjs

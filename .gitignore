@@ -1,0 +1,9 @@
+src-tauri/target/
+src-tauri/gen/
+src-tauri/.tauri/
+src-tauri/bundle/
+release-output/
+.tools/
+node_modules/
+*.log
+*.msi
