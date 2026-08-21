@@ -11,16 +11,15 @@ function digest(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
-async function fixture() {
+async function fixture({ release = '0.1.3', minimumLauncher = '0.1.1' } = {}) {
   const output = await mkdtemp(join(tmpdir(), 'dsh-runtime-publish-'))
-  const release = '0.1.0'
   const archive = Buffer.from('verified runtime archive')
   const archiveKey = `releases/${release}/windows-x64/runtime.zip`
   const archivePath = join(output, ...archiveKey.split('/'))
   await mkdir(join(output, 'releases', release, 'windows-x64'), { recursive: true })
   await writeFile(archivePath, archive)
   const manifest = {
-    schema: 1, product: 'atlas-dsh-desktop', release, platform: 'windows', arch: 'x64', minimumLauncher: release,
+    schema: 1, product: 'atlas-dsh-desktop', release, platform: 'windows', arch: 'x64', minimumLauncher,
     components: [{
       id: 'runtime', version: release,
       asset: { objectKey: archiveKey, bytes: archive.length, sha256: digest(archive) },
@@ -31,7 +30,7 @@ async function fixture() {
   const manifestKey = `releases/${release}/windows-x64/manifest.json`
   await writeFile(join(output, ...manifestKey.split('/')), manifestBytes)
   const bootstrap = {
-    schema: 1, product: 'atlas-dsh-desktop', platform: 'windows', arch: 'x64', release, minimumLauncher: release,
+    schema: 1, product: 'atlas-dsh-desktop', platform: 'windows', arch: 'x64', release, minimumLauncher,
     manifest: { objectKey: manifestKey, bytes: manifestBytes.length, sha256: digest(manifestBytes) },
   }
   await mkdir(join(output, 'bootstrap'), { recursive: true })
@@ -42,8 +41,14 @@ async function fixture() {
 test('accepts a self-consistent runtime publication closure', async () => {
   const { output } = await fixture()
   const publication = await loadPublication(output)
-  assert.equal(publication.archive.key, 'releases/0.1.0/windows-x64/runtime.zip')
+  assert.equal(publication.archive.key, 'releases/0.1.3/windows-x64/runtime.zip')
   assert.equal(publication.manifest.identity.bytes > 0, true)
+})
+
+test('accepts a runtime release above the minimum compatible Launcher', async () => {
+  const { output } = await fixture({ release: '0.1.3', minimumLauncher: '0.1.1' })
+  const publication = await loadPublication(output)
+  assert.equal(publication.archive.key, 'releases/0.1.3/windows-x64/runtime.zip')
 })
 
 test('rejects a manifest whose runtime digest does not match its archive', async () => {

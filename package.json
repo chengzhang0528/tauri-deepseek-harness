@@ -11,6 +11,7 @@
     "publish:runtime": "node scripts/publish-runtime.mjs",
     "check:version": "node scripts/check-version.mjs",
     "test:bridge": "node --test scripts/desktop-bridge.test.mjs",
+    "test:runtime-build": "node --test scripts/build-runtime.test.mjs",
     "test:release-tag": "node --test scripts/release-tag.test.mjs",
     "test:runtime-publish": "node --test scripts/publish-runtime.test.mjs",
     "check:docs": "node --test 文档/check-docs-human.test.mjs 文档/check-docs-phases.test.mjs 文档/check-docs-references.test.mjs && node 文档/check-docs.mjs",

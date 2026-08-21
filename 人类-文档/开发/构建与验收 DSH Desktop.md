@@ -24,7 +24,7 @@ npm run build:msi
 
 ## 按版本 Tag 构建
 
-在 GitHub 网页将 `main` 的已验证提交创建为 `v0.1.1` 后，发布工作流会调用 `release:tag`，并生成相同版本的 MSI、Launcher 和 runtime manifest，不需要修改版本源码。需要在本机复现该构建时运行：
+在 GitHub 网页将 `main` 的已验证提交创建为 `v0.1.1` 后，发布工作流会调用 `release:tag`。MSI/Launcher 使用 Tag 版本；runtime manifest 的 `release` 使用该 runtime 发布版本，`minimumLauncher` 默认取源码 `version.json` 中的稳定 Launcher 版本，因此 runtime-only 更新不会因为版本号变化而强制重装 Launcher。只有 bridge、协议或 manifest schema 不兼容时，才显式提高该兼容下限并发布新的 MSI。需要在本机复现该构建时运行：
 
 ```powershell
 npm run release:tag -- --tag v0.1.1
@@ -57,7 +57,7 @@ node scripts/doctor-runtime.mjs --root $runtimeRoot
 doctor 必须同时通过 `node --version`、`rg --version`、`dsh --version`、随机端口 `dsh web --port 0 --no-open`、Harness bootstrap 身份检查和 bridge drain。通过后生成本地 manifest、bootstrap 和 ZIP：
 
 ```powershell
-node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release 0.1.1 --output-dir $runtimeOutput
+node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release 0.1.1 --minimum-launcher-version 0.1.1 --output-dir $runtimeOutput
 ```
 
 构建机无法连接上游 ripgrep 下载地址时，先从固定上游取得 `ripgrep-15.2.0-x86_64-pc-windows-msvc.zip`，再将本地路径传给 `--ripgrep-zip`。脚本仍会校验 `runtime-versions.windows-x64.json` 中的 SHA-256；不匹配的文件不会进入 closure。

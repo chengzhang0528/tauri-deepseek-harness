@@ -7,8 +7,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const RELEASE_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const values = new Map()
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index]
@@ -19,6 +20,19 @@ function parseArgs(argv) {
     index += 1
   }
   return values
+}
+
+export function resolveMinimumLauncherVersion(values, fallback) {
+  const explicit = values.get('minimum-launcher-version')
+  const legacy = values.get('launcher-version')
+  if (explicit && legacy && explicit !== legacy) {
+    throw new Error('--minimum-launcher-version and --launcher-version must match when both are provided')
+  }
+  const value = explicit ?? legacy ?? fallback
+  if (!RELEASE_VERSION.test(value)) {
+    throw new Error('minimum launcher version must be a semantic x.y.z version')
+  }
+  return value
 }
 
 function required(values, name) {
@@ -78,11 +92,14 @@ async function main() {
   const values = parseArgs(process.argv.slice(2))
   const runtimeRoot = required(values, 'runtime-root')
   const release = values.get('release')
-  if (!release || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(release)) {
+  if (!release || !RELEASE_VERSION.test(release)) {
     throw new Error('release must be a semantic x.y.z version')
   }
   const outputDir = required(values, 'output-dir')
-  const launcherVersion = values.get('launcher-version') ?? JSON.parse(await readFile(join(root, 'version.json'), 'utf8')).launcherVersion
+  const minimumLauncherVersion = resolveMinimumLauncherVersion(
+    values,
+    JSON.parse(await readFile(join(root, 'version.json'), 'utf8')).launcherVersion,
+  )
   const metadataPath = join(root, 'src-tauri', 'resources', 'runtime-versions.windows-x64.json')
   const bridgePath = join(root, 'src-tauri', 'resources', 'desktop-bridge.mjs')
   const bridgePatchTemplatePath = join(root, 'src-tauri', 'resources', 'desktop-bridge.patch.yml')
@@ -121,7 +138,7 @@ async function main() {
     release,
     platform: 'windows',
     arch: 'x64',
-    minimumLauncher: launcherVersion,
+    minimumLauncher: minimumLauncherVersion,
     components: [{
       id: 'runtime',
       version: release,
@@ -144,7 +161,7 @@ async function main() {
     platform: 'windows',
     arch: 'x64',
     release,
-    minimumLauncher: launcherVersion,
+    minimumLauncher: minimumLauncherVersion,
     manifest: {
       objectKey: `releases/${release}/windows-x64/manifest.json`,
       ...manifestDigest,
@@ -159,9 +176,11 @@ async function main() {
   process.stdout.write(`runtime: ${release}\narchive: ${archivePath}\narchive bytes: ${asset.bytes}\narchive sha256: ${asset.sha256}\nmanifest: ${manifestPath}\nbootstrap: ${bootstrapPath}\n`)
 }
 
-try {
-  await main()
-} catch (error) {
-  process.stderr.write(`runtime build failed: ${error instanceof Error ? error.message : String(error)}\n`)
-  process.exitCode = 1
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    await main()
+  } catch (error) {
+    process.stderr.write(`runtime build failed: ${error instanceof Error ? error.message : String(error)}\n`)
+    process.exitCode = 1
+  }
 }

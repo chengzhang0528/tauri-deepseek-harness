@@ -54,7 +54,7 @@ Windows current-user MSI
 
 ## 制品与版本契约
 
-Installer、Launcher 与 runtime 分别版本化。未带 Tag 的本地构建以 `version.json` 作为 Installer/Launcher 开发版本唯一所有者；版本 Tag `vX.Y.Z` 是发布构建的唯一版本所有者。`release:tag` 将该版本同时注入 Tauri MSI 配置、Launcher 编译期版本和 runtime manifest 的 `minimumLauncher`，因此在 GitHub 网页创建新的版本 Tag 无需修改版本源码。release manifest 作为 runtime 组件版本唯一所有者。普通 runtime 更新不得重建或改写稳定 Installer 版本。
+Installer、Launcher 与 runtime 分别版本化。未带 Tag 的本地构建以 `version.json` 作为 Installer/Launcher 开发版本唯一所有者；版本 Tag `vX.Y.Z` 是该次发布构建的 MSI/Launcher 版本输入。runtime manifest 的 `release` 与 `minimumLauncher` 是两个独立字段：`minimumLauncher` 表示支持该 runtime bridge/protocol 的最低 Launcher 版本，`build-runtime` 默认读取 `version.json` 的稳定 Launcher 版本，发布流程不得按 runtime tag 自动提高该下限。只有 bridge、协议或 manifest schema 发生不兼容变化时，才显式提高 `minimumLauncher` 并同步发布新 MSI。release manifest 作为 runtime 组件版本唯一所有者；普通 runtime 更新不得重建或改写稳定 Installer 版本。
 
 ```text
 scheme: https
@@ -140,7 +140,7 @@ Launcher 启动时以及 Native Host 运行期间约每六小时检查一次。�
 3. 构建固定 Windows x64 runtime 闭包和 desktop bridge，冻结 Node ABI 与原生模块；禁止用户机器 npm 安装。
 4. 实现随机端口启动、Harness 身份确认、隐藏进程、Job Object、健康监控和有界重启；只有 ready 后才动态创建直接加载 dsh URL 的 WebView。
 5. 实现原生托盘、TaskDialog、活动任务 drain、显式退出与强退边界，再接入更新暂存和确认激活；不向 dsh 页面添加桌面端交互。
-6. 使用 Tauri 官方 WiX/MSI 构建链和项目级 WiX 模板生成当前用户薄安装器，加入 seed Bootstrap、WebView2 探测、许可证、修复和卸载边界；匹配 `vX.Y.Z` 版本 Tag 时由 GitHub Actions 调用 `release:tag`，使 Tag 成为 MSI、Launcher 和 runtime compatibility 的共同版本，再构建受检 runtime 闭包，先将 immutable runtime ZIP/manifest 上传、匿名回读，再提交 OSS Bootstrap，最后将 MSI 上传同名 GitHub Release。发布工作流只从 `oss-release` Environment Secrets 获取 OSS 写凭据，运行客户端不持有写权限。生成 MSI 若注册为 per-machine 或要求提升权限，立即阻断打包，不并行增加第二套安装器。
+6. 使用 Tauri 官方 WiX/MSI 构建链和项目级 WiX 模板生成当前用户薄安装器，加入 seed Bootstrap、WebView2 探测、许可证、修复和卸载边界；匹配 `vX.Y.Z` 版本 Tag 时由 GitHub Actions 调用 `release:tag`，MSI/Launcher 使用该 Tag 版本，runtime 闭包另以独立 `release` 和显式兼容下限构建。先将 immutable runtime ZIP/manifest 上传、匿名回读，再提交 OSS Bootstrap，最后将 MSI 上传同名 GitHub Release。发布工作流只从 `oss-release` Environment Secrets 获取 OSS 写凭据，运行客户端不持有写权限。生成 MSI 若注册为 per-machine 或要求提升权限，立即阻断打包，不并行增加第二套安装器。
 
 不得照搬参考项目的系统 Node 复用、Node 最新版解析、`@latest`、固定 3080、TCP-only ready、`taskkill /T /F` 日常退出、完整 stdout 日志或将 runtime payload 发布到 GitHub Release 作为运行期下载源。
 

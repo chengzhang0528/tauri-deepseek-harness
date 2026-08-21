@@ -34,6 +34,11 @@ jobs:
             throw "Tag $env:GITHUB_REF_NAME must use vX.Y.Z"
           }
           "RELEASE_VERSION=$($Matches.version)" >> $env:GITHUB_ENV
+          $metadata = Get-Content -Raw version.json | ConvertFrom-Json
+          if ($metadata.launcherVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "version.json launcherVersion is invalid"
+          }
+          "MINIMUM_LAUNCHER_VERSION=$($metadata.launcherVersion)" >> $env:GITHUB_ENV
 
       - name: Install Rust GNU toolchain
         shell: pwsh
@@ -50,7 +55,7 @@ jobs:
           $runtimeOutput = Join-Path $env:RUNNER_TEMP "dsh-runtime-output-$env:RELEASE_VERSION"
           npm run prepare:runtime -- --runtime-root $runtimeRoot --work-dir $runtimeWork
           if ($LASTEXITCODE -ne 0) { throw "Runtime closure preparation failed" }
-          node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release $env:RELEASE_VERSION --launcher-version $env:RELEASE_VERSION --output-dir $runtimeOutput
+          node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release $env:RELEASE_VERSION --minimum-launcher-version $env:MINIMUM_LAUNCHER_VERSION --output-dir $runtimeOutput
           if ($LASTEXITCODE -ne 0) { throw "Runtime closure verification and archive build failed" }
           "RUNTIME_OUTPUT=$runtimeOutput" >> $env:GITHUB_ENV
 
