@@ -26,6 +26,13 @@ test('desktop bridge accepts only the fixed request shape', () => {
   )
 })
 
+test('runtime doctor requires the pinned native module set when present', async () => {
+  const doctor = await readFile(new URL('./doctor-runtime.mjs', import.meta.url), 'utf8')
+  for (const name of ['node-pty', 'koffi', 'sharp']) {
+    assert.match(doctor, new RegExp(`['"]${name}['"]`))
+  }
+})
+
 test('desktop bridge patch inserts a new root loader entry', async () => {
   const patch = await readFile(new URL('../src-tauri/resources/desktop-bridge.patch.yml', import.meta.url), 'utf8')
   assert.deepEqual(patch.trimEnd().split(/\r?\n/), [

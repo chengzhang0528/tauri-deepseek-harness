@@ -66,6 +66,7 @@
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchApp)" />
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
         <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="[LAUNCHAPPARGS]" Return="asyncNoWait" />
+        <CustomAction Id="CleanupInstallerOwnedState" Impersonate="yes" FileKey="Path" ExeCommand="--cleanup-installer-owned-state" Return="check" />
 
         <UI>
             <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
@@ -178,6 +179,7 @@
 
         <InstallExecuteSequence>
             <Custom Action="LaunchApplication" After="InstallFinalize">AUTOLAUNCHAPP = 1 AND NOT Installed</Custom>
+            <Custom Action="CleanupInstallerOwnedState" Before="RemoveFiles">REMOVE = "ALL" AND NOT WIX_UPGRADE_DETECTED</Custom>
         </InstallExecuteSequence>
         <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLDIR]" After="CostFinalize" />
     </Product>

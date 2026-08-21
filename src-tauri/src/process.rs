@@ -204,23 +204,38 @@ fn wait_for_ready(lines: &Arc<Mutex<Vec<String>>>) -> Result<Url> {
         .build()
         .context("cannot create readiness client")?;
     let mut inspected = 0usize;
+    let mut candidates = Vec::new();
     while Instant::now() < deadline {
         let snapshot = lines
             .lock()
             .map_err(|_| anyhow::anyhow!("dsh log lock poisoned"))?
             .clone();
-        for line in snapshot.iter().skip(inspected) {
-            if let Some(port) = extract_port(line) {
-                let url = Url::parse(&format!("http://127.0.0.1:{port}/"))?;
-                if harness_page_ready(&client, &url)? {
-                    return Ok(url);
-                }
+        collect_readiness_candidates(&snapshot, &mut inspected, &mut candidates)?;
+        for url in &candidates {
+            if harness_page_ready(&client, url)? {
+                return Ok(url.clone());
             }
         }
-        inspected = snapshot.len();
         std::thread::sleep(Duration::from_millis(100));
     }
     bail!("dsh web did not expose a verified ready page before timeout")
+}
+
+fn collect_readiness_candidates(
+    lines: &[String],
+    inspected: &mut usize,
+    candidates: &mut Vec<Url>,
+) -> Result<()> {
+    for line in lines.iter().skip(*inspected) {
+        if let Some(port) = extract_port(line) {
+            let url = Url::parse(&format!("http://127.0.0.1:{port}/"))?;
+            if !candidates.contains(&url) {
+                candidates.push(url);
+            }
+        }
+    }
+    *inspected = lines.len();
+    Ok(())
 }
 
 fn harness_page_ready(client: &Client, url: &Url) -> Result<bool> {
@@ -399,7 +414,9 @@ mod tests {
     use std::io::BufReader;
 
     use super::read_bounded_line;
-    use super::{BridgeResponse, PROTOCOL_VERSION, bridge_status, extract_port};
+    use super::{
+        BridgeResponse, PROTOCOL_VERSION, bridge_status, collect_readiness_candidates, extract_port,
+    };
 
     #[test]
     fn extracts_only_nonzero_local_ports() {
@@ -438,5 +455,18 @@ mod tests {
             Some(b"next".to_vec())
         );
         assert_eq!(read_bounded_line(&mut reader, 4).expect("eof"), None);
+    }
+
+    #[test]
+    fn readiness_retries_an_observed_url_until_its_page_is_available() {
+        let first = vec!["dsh web: http://127.0.0.1:43123".to_owned()];
+        let mut inspected = 0;
+        let mut candidates = Vec::new();
+        collect_readiness_candidates(&first, &mut inspected, &mut candidates).expect("candidate");
+        assert_eq!(candidates.len(), 1);
+
+        collect_readiness_candidates(&first, &mut inspected, &mut candidates).expect("retry");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].as_str(), "http://127.0.0.1:43123/");
     }
 }

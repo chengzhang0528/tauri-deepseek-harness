@@ -247,10 +247,7 @@ async function main() {
 }
 
 function detectNativeModules(root) {
-  const packagePath = join(root, 'node_modules', 'package.json')
-  if (!existsSync(packagePath)) return []
-  const names = ['node-pty', 'koffi', 'sharp'].filter((name) => existsSync(join(root, 'node_modules', name)))
-  return names
+  return ['node-pty', 'koffi', 'sharp'].filter((name) => existsSync(join(root, 'node_modules', name)))
 }
 
 try {
