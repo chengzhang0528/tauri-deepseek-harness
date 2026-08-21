@@ -5,5 +5,7 @@ src-tauri/bundle/
 release-output/
 .tools/
 node_modules/
+runtime/node_modules/
+runtime/.npm-cache/
 *.log
 *.msi

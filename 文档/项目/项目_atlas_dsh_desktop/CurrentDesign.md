@@ -71,6 +71,8 @@ Bootstrap 是唯一可变指针。Manifest 至少包含 schema、release、platf
 
 所有组件在冻结候选前于 Windows x64 构建：`node-pty`、`koffi`、`sharp` 等原生依赖必须在目标 Node ABI 上加载通过；ripgrep 执行 `--version`；dsh 执行 `--version` 并完成一次随机端口启动 doctor。用户机器不运行编译器和 `npm install`。
 
+`src-tauri/resources/runtime-versions.windows-x64.json` 是 Windows x64 Node、dsh、pnpm、ripgrep 上游版本、对象 URL 和适用 SHA-256 的唯一所有者；`runtime/package-lock.json` 固定 dsh 的完整 npm 依赖图。`prepare:runtime` 仅在构建机执行：下载并校验 Node/ripgrep，使用 private Node 对锁文件执行 `npm ci`，再物化 bridge、doctor、许可证通知和版本元数据。它接受已取得的 Node/ripgrep ZIP 作为本地构建输入，但仍要求同一固定 SHA-256；用户安装后的 Launcher 不读取这些构建机输入，也不从 npm、GitHub 或系统 Node 回退。
+
 ## 本地目录和状态
 
 ```text
@@ -80,6 +82,8 @@ Bootstrap 是唯一可变指针。Manifest 至少包含 schema、release、platf
   cache\                    # 按 object key + digest 复用
   staging\                  # 未激活候选
   state\current.json        # 原子替换的当前 release 指针与已校验 manifest 快照
+  state\staged.json         # 已通过校验、等待用户确认的 release 指针
+  state\repair.json         # forward repair 的失败阶段、版本和脱敏错误
   logs\                     # 有上限、轮转、脱敏的客户端诊断
 
 %APPDATA%\DSH Desktop\

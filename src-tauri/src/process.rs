@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::io::{BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
@@ -16,6 +16,7 @@ use crate::job::ProcessJob;
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_LOG_LINE: usize = 16 * 1024;
 const MAX_BRIDGE_LINE: usize = 64 * 1024;
+const MAX_READY_PAGE_BYTES: usize = 2 * 1024 * 1024;
 const BRIDGE_TIMEOUT: Duration = Duration::from_secs(2);
 const APP_EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 const SENTINEL: &str = "@@DSH_DESKTOP@@";
@@ -229,7 +230,16 @@ fn harness_page_ready(client: &Client, url: &Url) -> Result<bool> {
     if !response.status().is_success() {
         return Ok(false);
     }
-    let body = response.text().context("cannot read dsh readiness page")?;
+    let mut body = Vec::new();
+    response
+        .take(u64::try_from(MAX_READY_PAGE_BYTES + 1).unwrap_or(u64::MAX))
+        .read_to_end(&mut body)
+        .context("cannot read dsh readiness page")?;
+    ensure!(
+        body.len() <= MAX_READY_PAGE_BYTES,
+        "dsh readiness page exceeds the client maximum size"
+    );
+    let body = String::from_utf8_lossy(&body);
     Ok(body.contains("window.__DSH_BOOT__"))
 }
 
@@ -345,6 +355,7 @@ fn find_executable(root: &Path, name: &str) -> Result<PathBuf> {
 
 fn find_dsh_cli(root: &Path) -> Result<PathBuf> {
     for relative in [
+        "node_modules/@deepseek-ai/dsh/lib/bin.js",
         "node_modules/@deepseek-ai/dsh/dist/cli.js",
         "node_modules/@deepseek-ai/deepseek-harness/dist/cli.js",
         "dsh/cli.js",

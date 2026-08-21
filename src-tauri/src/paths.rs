@@ -56,4 +56,12 @@ impl AppPaths {
     pub fn current_pointer(&self) -> PathBuf {
         self.state.join("current.json")
     }
+
+    pub fn staged_pointer(&self) -> PathBuf {
+        self.state.join("staged.json")
+    }
+
+    pub fn repair_record(&self) -> PathBuf {
+        self.state.join("repair.json")
+    }
 }

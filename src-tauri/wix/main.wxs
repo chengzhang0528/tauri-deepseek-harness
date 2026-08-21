@@ -169,7 +169,7 @@
             <RegistrySearch Id="Webview2VersionUser" Root="HKCU" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" />
         </Property>
         {{#if download_bootstrapper}}
-        <CustomAction Id="DownloadAndInvokeBootstrapper" Directory="INSTALLDIR" Execute="deferred" ExeCommand="powershell.exe -NoProfile -WindowStyle hidden -Command &quot;try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {} ; Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile '$env:TEMP\MicrosoftEdgeWebview2Setup.exe' ; Start-Process -FilePath '$env:TEMP\MicrosoftEdgeWebview2Setup.exe' -ArgumentList '/silent','/install' -Wait&quot;" Return="check" />
+        <CustomAction Id="DownloadAndInvokeBootstrapper" Directory="INSTALLDIR" Execute="deferred" ExeCommand="powershell.exe -NoProfile -WindowStyle hidden -Command &quot;Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile '$env:TEMP\MicrosoftEdgeWebview2Setup.exe' ; Start-Process -FilePath '$env:TEMP\MicrosoftEdgeWebview2Setup.exe' -ArgumentList '/silent','/install' -Wait&quot;" Return="check" />
         <InstallExecuteSequence>
             <Custom Action="DownloadAndInvokeBootstrapper" Before="InstallFinalize"><![CDATA[NOT(REMOVE OR INSTALLED_WEBVIEW2_VERSION)]]></Custom>
         </InstallExecuteSequence>
@@ -177,7 +177,7 @@
         {{/if}}
 
         <InstallExecuteSequence>
-            <Custom Action="LaunchApplication" After="InstallFinalize">AUTOLAUNCHAPP AND NOT Installed</Custom>
+            <Custom Action="LaunchApplication" After="InstallFinalize">AUTOLAUNCHAPP = 1 AND NOT Installed</Custom>
         </InstallExecuteSequence>
         <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLDIR]" After="CostFinalize" />
     </Product>

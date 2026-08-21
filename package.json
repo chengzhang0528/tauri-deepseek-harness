@@ -4,6 +4,11 @@
   "scripts": {
     "build:native": "cargo +stable-x86_64-pc-windows-gnu build --release --manifest-path src-tauri/Cargo.toml",
     "build:msi": "node scripts/build-msi.mjs",
+    "doctor:runtime": "node scripts/doctor-runtime.mjs",
+    "build:runtime": "node scripts/build-runtime.mjs",
+    "prepare:runtime": "node scripts/prepare-runtime.mjs",
+    "check:version": "node scripts/check-version.mjs",
+    "test:bridge": "node --test scripts/desktop-bridge.test.mjs",
     "check:docs": "node --test 文档/check-docs-human.test.mjs 文档/check-docs-phases.test.mjs 文档/check-docs-references.test.mjs && node 文档/check-docs.mjs",
     "docs:check": "npm run check:docs",
     "test:docs": "node --test 文档/check-docs-human.test.mjs"

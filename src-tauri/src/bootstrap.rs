@@ -68,6 +68,16 @@ pub fn load_seed_or_remote(client: &Client, origin: &Url) -> Result<Bootstrap> {
     }
 }
 
+pub fn runtime_preparation_message(error: &anyhow::Error) -> String {
+    let detail = format!("{error:#}");
+    if detail.contains("runtime bootstrap is unavailable") {
+        return format!(
+            "没有已发布的受管 runtime。薄安装器不会使用系统 Node、npm 或其他下载源。\n\n请先将已验证的 runtime ZIP、manifest 和 bootstrap 发布到批准的 atlas-dsh-desktop/ OSS 前缀，然后重试启动。\n\n诊断：{detail}"
+        );
+    }
+    format!("运行时准备失败：{detail}")
+}
+
 pub fn write_seed_copy(path: &std::path::Path) -> Result<()> {
     if path.exists() {
         return Ok(());
@@ -92,5 +102,14 @@ mod tests {
             origin.join(REMOTE_BOOTSTRAP_KEY).expect("URL").path(),
             "/atlas-dsh-desktop/bootstrap/windows-x64.json"
         );
+    }
+
+    #[test]
+    fn unavailable_bootstrap_explains_the_thin_installer_boundary() {
+        let message = runtime_preparation_message(&anyhow::anyhow!(
+            "runtime bootstrap is unavailable: bootstrap request failed"
+        ));
+        assert!(message.contains("没有已发布的受管 runtime"));
+        assert!(message.contains("不会使用系统 Node"));
     }
 }

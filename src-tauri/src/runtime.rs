@@ -26,7 +26,7 @@ pub const MAX_EXTRACTED_FILE_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_EXTRACTED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const BRIDGE_PATCH_FILE: &str = "desktop-bridge.patch.yml";
 const BRIDGE_SCRIPT_FILE: &str = "desktop-bridge.mjs";
-pub const LAUNCHER_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const LAUNCHER_VERSION: &str = env!("DSH_LAUNCHER_VERSION");
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +37,23 @@ pub struct CurrentRelease {
     pub manifest: Option<ReleaseManifest>,
     #[serde(default)]
     pub manifest_snapshot_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StagedRelease {
+    pub release: String,
+    pub manifest_sha256: String,
+    pub manifest: ReleaseManifest,
+    pub manifest_snapshot_sha256: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairRecord {
+    pub release: String,
+    pub phase: String,
+    pub error: String,
 }
 
 #[derive(Debug, Clone)]
@@ -137,6 +154,14 @@ impl RuntimeManager {
         }
 
         fs::rename(&staging, &target_root).context("cannot activate runtime directory")?;
+        let activated = (|| -> Result<()> {
+            materialize_bridge_files(&target_root)?;
+            Self::run_doctors(&manifest, &target_root)
+        })();
+        if let Err(error) = activated {
+            let _ = fs::remove_dir_all(&target_root);
+            return Err(error).context("activated runtime failed bridge or doctor validation");
+        }
         let pointer = CurrentRelease {
             release: manifest.release.clone(),
             manifest_sha256: bootstrap.manifest.sha256,
@@ -186,6 +211,184 @@ impl RuntimeManager {
             }
             _ => Some(bootstrap.release),
         })
+    }
+
+    /// Download, verify, unpack, and doctor a compatible runtime without changing current.
+    pub fn stage_update(&self) -> Result<Option<StagedRelease>> {
+        self.paths.create()?;
+        let origin = release_origin()?;
+        let current = self.read_current()?;
+        let bootstrap = fetch_bootstrap(&self.client, &origin)?;
+        ensure_launcher_compatible(&bootstrap.minimum_launcher)?;
+        ensure_no_downgrade(current.as_ref(), &bootstrap.release)?;
+
+        let manifest_bytes = self.download_verified(&origin, &bootstrap.manifest)?;
+        let manifest: ReleaseManifest =
+            serde_json::from_slice(&manifest_bytes).context("runtime manifest JSON is invalid")?;
+        manifest.validate().context("runtime manifest is invalid")?;
+        ensure_launcher_compatible(&manifest.minimum_launcher)?;
+        if manifest.release != bootstrap.release {
+            bail!("bootstrap release does not match runtime manifest release");
+        }
+
+        if current.as_ref().is_some_and(|current| {
+            current.release == manifest.release
+                && current
+                    .manifest_sha256
+                    .eq_ignore_ascii_case(&bootstrap.manifest.sha256)
+        }) {
+            let _ = fs::remove_file(self.paths.staged_pointer());
+            return Ok(None);
+        }
+
+        let snapshot = manifest_snapshot_sha256(&manifest)?;
+        if let Some(staged) = self.read_staged()? {
+            if staged.release == manifest.release
+                && staged
+                    .manifest_sha256
+                    .eq_ignore_ascii_case(&bootstrap.manifest.sha256)
+                && staged
+                    .manifest_snapshot_sha256
+                    .eq_ignore_ascii_case(&snapshot)
+            {
+                let target_root = self.paths.runtimes.join(&staged.release);
+                if target_root.is_dir()
+                    && staged_snapshot_is_valid(&staged)
+                    && bridge_files_match(&target_root)
+                    && Self::run_doctors(&staged.manifest, &target_root).is_ok()
+                {
+                    return Ok(Some(staged));
+                }
+            }
+            let _ = fs::remove_file(self.paths.staged_pointer());
+        }
+
+        let target_root = self.paths.runtimes.join(&manifest.release);
+        if target_root.exists() {
+            ensure!(
+                target_root.is_dir() && bridge_files_match(&target_root),
+                "runtime directory collision for release {}",
+                manifest.release
+            );
+            Self::run_doctors(&manifest, &target_root)
+                .context("existing runtime candidate failed doctor")?;
+        } else {
+            let staging =
+                self.paths
+                    .staging
+                    .join(format!("{}-{}", manifest.release, Uuid::new_v4()));
+            fs::create_dir_all(&staging)
+                .with_context(|| format!("cannot create staging root {}", staging.display()))?;
+            let staged = (|| -> Result<()> {
+                for component in &manifest.components {
+                    self.stage_component(&origin, component, &staging)?;
+                }
+                materialize_bridge_files(&staging)?;
+                Self::run_doctors(&manifest, &staging)?;
+                Ok(())
+            })();
+            if let Err(error) = staged {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(error);
+            }
+            if let Err(error) = fs::rename(&staging, &target_root) {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(error).context("cannot publish staged runtime directory");
+            }
+            let activated = (|| -> Result<()> {
+                materialize_bridge_files(&target_root)?;
+                Self::run_doctors(&manifest, &target_root)
+            })();
+            if let Err(error) = activated {
+                let _ = fs::remove_dir_all(&target_root);
+                return Err(error).context("activated runtime failed bridge or doctor validation");
+            }
+        }
+
+        let staged = StagedRelease {
+            release: manifest.release.clone(),
+            manifest_sha256: bootstrap.manifest.sha256,
+            manifest,
+            manifest_snapshot_sha256: snapshot,
+        };
+        self.write_staged(&staged)?;
+        Ok(Some(staged))
+    }
+
+    /// Atomically promote a previously doctored staged runtime to current.
+    pub fn activate_staged(&self) -> Result<PreparedRuntime> {
+        self.activate_staged_with(Self::run_doctors)
+    }
+
+    fn activate_staged_with<F>(&self, validator: F) -> Result<PreparedRuntime>
+    where
+        F: Fn(&ReleaseManifest, &Path) -> Result<()>,
+    {
+        let staged = self
+            .read_staged()?
+            .context("no staged runtime is available")?;
+        let current = self.read_current()?;
+        ensure_no_downgrade(current.as_ref(), &staged.release)?;
+        ensure!(
+            staged_snapshot_is_valid(&staged),
+            "staged runtime pointer is corrupt"
+        );
+        let target_root = self.paths.runtimes.join(&staged.release);
+        ensure!(
+            target_root.is_dir() && bridge_files_match(&target_root),
+            "staged runtime directory is missing or invalid"
+        );
+        validator(&staged.manifest, &target_root).context("staged runtime doctor failed")?;
+
+        let pointer = CurrentRelease {
+            release: staged.release.clone(),
+            manifest_sha256: staged.manifest_sha256.clone(),
+            manifest_snapshot_sha256: Some(staged.manifest_snapshot_sha256.clone()),
+            manifest: Some(staged.manifest.clone()),
+        };
+        self.write_current(&pointer)?;
+        let _ = fs::remove_file(self.paths.staged_pointer());
+        let _ = self.clear_repair();
+        Ok(PreparedRuntime { root: target_root })
+    }
+
+    pub fn record_forward_repair(
+        &self,
+        release: impl Into<String>,
+        phase: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Result<()> {
+        self.paths.create()?;
+        let record = RepairRecord {
+            release: release.into(),
+            phase: phase.into(),
+            error: error.into(),
+        };
+        let temporary = self
+            .paths
+            .repair_record()
+            .with_extension(format!("{}.tmp", Uuid::new_v4()));
+        fs::write(&temporary, serde_json::to_vec_pretty(&record)?)
+            .with_context(|| format!("cannot write repair record {}", temporary.display()))?;
+        atomic_replace(&temporary, &self.paths.repair_record())
+            .context("cannot publish repair record")
+    }
+
+    pub fn read_repair(&self) -> Result<Option<RepairRecord>> {
+        read_json_state(&self.paths.repair_record(), "repair record")
+    }
+
+    pub fn read_staged(&self) -> Result<Option<StagedRelease>> {
+        read_json_state(&self.paths.staged_pointer(), "staged runtime pointer")
+    }
+
+    pub fn clear_repair(&self) -> Result<()> {
+        let path = self.paths.repair_record();
+        if path.exists() {
+            fs::remove_file(&path)
+                .with_context(|| format!("cannot remove repair record {}", path.display()))?;
+        }
+        Ok(())
     }
 
     fn stage_component(
@@ -292,14 +495,7 @@ impl RuntimeManager {
 
     fn read_current(&self) -> Result<Option<CurrentRelease>> {
         let pointer = self.paths.current_pointer();
-        if !pointer.exists() {
-            return Ok(None);
-        }
-        let bytes =
-            fs::read(&pointer).with_context(|| format!("cannot read {}", pointer.display()))?;
-        let current =
-            serde_json::from_slice(&bytes).context("current runtime pointer is corrupt")?;
-        Ok(Some(current))
+        read_json_state(&pointer, "current runtime pointer")
     }
 
     fn write_current(&self, current: &CurrentRelease) -> Result<()> {
@@ -312,6 +508,30 @@ impl RuntimeManager {
         atomic_replace(&temporary, &pointer)
             .with_context(|| format!("cannot publish {}", pointer.display()))
     }
+
+    fn write_staged(&self, staged: &StagedRelease) -> Result<()> {
+        let pointer = self.paths.staged_pointer();
+        let temporary = pointer.with_extension(format!("{}.tmp", Uuid::new_v4()));
+        let content =
+            serde_json::to_vec_pretty(staged).context("cannot serialize staged pointer")?;
+        fs::write(&temporary, content)
+            .with_context(|| format!("cannot write {}", temporary.display()))?;
+        atomic_replace(&temporary, &pointer)
+            .with_context(|| format!("cannot publish {}", pointer.display()))
+    }
+}
+
+fn read_json_state<T>(path: &Path, label: &str) -> Result<Option<T>>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .with_context(|| format!("{label} is corrupt"))
 }
 
 fn ensure_launcher_compatible(minimum_launcher: &str) -> Result<()> {
@@ -365,6 +585,21 @@ fn current_snapshot_is_valid(current: &CurrentRelease, manifest: &ReleaseManifes
         return false;
     };
     expected.eq_ignore_ascii_case(&actual)
+}
+
+fn staged_snapshot_is_valid(staged: &StagedRelease) -> bool {
+    staged.manifest.validate().is_ok()
+        && staged.release == staged.manifest.release
+        && staged.manifest_sha256.len() == crate::manifest::SHA256_HEX_LENGTH
+        && staged
+            .manifest_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        && manifest_snapshot_sha256(&staged.manifest).is_ok_and(|actual| {
+            staged
+                .manifest_snapshot_sha256
+                .eq_ignore_ascii_case(&actual)
+        })
 }
 
 pub fn resolve_relative(root: &Path, relative: &str) -> Result<PathBuf> {
@@ -516,52 +751,72 @@ fn hide_console(command: &mut Command) {
 }
 
 fn bridge_files_match(root: &Path) -> bool {
-    [
-        (
-            BRIDGE_PATCH_FILE,
-            include_bytes!("../resources/desktop-bridge.patch.yml").as_slice(),
-        ),
-        (
-            BRIDGE_SCRIPT_FILE,
-            include_bytes!("../resources/desktop-bridge.mjs").as_slice(),
-        ),
-    ]
-    .into_iter()
-    .all(|(name, expected)| fs::read(root.join(name)).is_ok_and(|actual| actual == expected))
+    let Ok(expected_patch) = rendered_bridge_patch(root) else {
+        return false;
+    };
+    fs::read(root.join(BRIDGE_PATCH_FILE)).is_ok_and(|actual| actual == expected_patch)
+        && fs::read(root.join(BRIDGE_SCRIPT_FILE))
+            .is_ok_and(|actual| actual == include_bytes!("../resources/desktop-bridge.mjs"))
 }
 
 fn materialize_bridge_files(root: &Path) -> Result<()> {
-    for (name, contents) in [
-        (
-            BRIDGE_PATCH_FILE,
-            include_bytes!("../resources/desktop-bridge.patch.yml").as_slice(),
-        ),
-        (
-            BRIDGE_SCRIPT_FILE,
-            include_bytes!("../resources/desktop-bridge.mjs").as_slice(),
-        ),
-    ] {
-        let target = root.join(name);
-        if target.exists() {
-            ensure!(
-                fs::read(&target).with_context(|| format!("cannot read {}", target.display()))?
-                    == contents,
-                "runtime contains an unexpected desktop bridge file {}",
-                target.display()
-            );
-            continue;
-        }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&target)
-            .with_context(|| format!("cannot create {}", target.display()))?;
-        file.write_all(contents)
-            .with_context(|| format!("cannot write {}", target.display()))?;
-        file.flush()
-            .with_context(|| format!("cannot flush {}", target.display()))?;
+    let script_target = root.join(BRIDGE_SCRIPT_FILE);
+    let script = include_bytes!("../resources/desktop-bridge.mjs");
+    if script_target.exists() {
+        ensure!(
+            fs::read(&script_target)
+                .with_context(|| format!("cannot read {}", script_target.display()))?
+                == script,
+            "runtime contains an unexpected desktop bridge file {}",
+            script_target.display()
+        );
+    } else {
+        write_new_file(&script_target, script)?;
     }
-    Ok(())
+
+    // The patch names this root's bridge through an absolute file URL. It must be
+    // rewritten after staging is atomically renamed to its final runtime directory.
+    write_replacing_file(&root.join(BRIDGE_PATCH_FILE), &rendered_bridge_patch(root)?)
+}
+
+fn rendered_bridge_patch(root: &Path) -> Result<Vec<u8>> {
+    const BRIDGE_MODULE_PLACEHOLDER: &str = "__DSH_DESKTOP_BRIDGE_MODULE__";
+    let template = std::str::from_utf8(include_bytes!("../resources/desktop-bridge.patch.yml"))
+        .context("desktop bridge patch template is not UTF-8")?;
+    ensure!(
+        template.matches(BRIDGE_MODULE_PLACEHOLDER).count() == 1,
+        "desktop bridge patch template must contain exactly one module placeholder"
+    );
+    let bridge_url = Url::from_file_path(root.join(BRIDGE_SCRIPT_FILE))
+        .map_err(|()| anyhow::anyhow!("cannot render desktop bridge file URL"))?;
+    Ok(template
+        .replace(BRIDGE_MODULE_PLACEHOLDER, bridge_url.as_str())
+        .into_bytes())
+}
+
+fn write_new_file(target: &Path, contents: &[u8]) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+        .with_context(|| format!("cannot create {}", target.display()))?;
+    file.write_all(contents)
+        .with_context(|| format!("cannot write {}", target.display()))?;
+    file.flush()
+        .with_context(|| format!("cannot flush {}", target.display()))
+}
+
+fn write_replacing_file(target: &Path, contents: &[u8]) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(target)
+        .with_context(|| format!("cannot open {}", target.display()))?;
+    file.write_all(contents)
+        .with_context(|| format!("cannot write {}", target.display()))?;
+    file.flush()
+        .with_context(|| format!("cannot flush {}", target.display()))
 }
 
 #[cfg(test)]
@@ -622,6 +877,29 @@ mod tests {
     }
 
     #[test]
+    fn bridge_patch_is_rerendered_after_runtime_directory_rename() {
+        let parent = tempdir().expect("temp");
+        let staging = parent.path().join("staging");
+        let runtime = parent.path().join("runtime");
+        fs::create_dir(&staging).expect("staging");
+        materialize_bridge_files(&staging).expect("bridge files");
+        fs::rename(&staging, &runtime).expect("activate runtime");
+
+        assert!(!bridge_files_match(&runtime));
+        materialize_bridge_files(&runtime).expect("rerender bridge files");
+        assert!(bridge_files_match(&runtime));
+        let patch = fs::read_to_string(runtime.join(BRIDGE_PATCH_FILE)).expect("patch");
+        let runtime_url = Url::from_file_path(runtime.join(BRIDGE_SCRIPT_FILE))
+            .expect("runtime URL")
+            .to_string();
+        let staging_url = Url::from_file_path(staging.join(BRIDGE_SCRIPT_FILE))
+            .expect("staging URL")
+            .to_string();
+        assert!(patch.contains(&runtime_url));
+        assert!(!patch.contains(&staging_url));
+    }
+
+    #[test]
     fn rejects_runtime_downgrades() {
         let current = CurrentRelease {
             release: "1.2.0".into(),
@@ -671,5 +949,137 @@ mod tests {
         let mut tampered = manifest;
         tampered.release = "../outside".into();
         assert!(!current_snapshot_is_valid(&current, &tampered));
+    }
+
+    fn test_paths(root: &Path) -> crate::paths::AppPaths {
+        crate::paths::AppPaths {
+            local_root: root.join("local"),
+            roaming_root: root.join("roaming"),
+            launcher: root.join("local/launcher"),
+            runtimes: root.join("local/runtimes"),
+            cache: root.join("local/cache"),
+            staging: root.join("local/staging"),
+            state: root.join("local/state"),
+            logs: root.join("local/logs"),
+            dsh_home: root.join("roaming/dsh-home"),
+        }
+    }
+
+    fn test_manifest(release: &str) -> ReleaseManifest {
+        ReleaseManifest {
+            schema: 1,
+            product: crate::manifest::PRODUCT_ID.into(),
+            release: release.into(),
+            platform: crate::manifest::PLATFORM.into(),
+            arch: crate::manifest::ARCH.into(),
+            minimum_launcher: "0.1.0".into(),
+            components: vec![RuntimeComponent {
+                id: "runtime".into(),
+                version: release.into(),
+                asset: AssetRef {
+                    object_key: format!("releases/{release}/windows-x64/runtime.zip"),
+                    bytes: 1,
+                    sha256: "a".repeat(64),
+                },
+                archive: "zip".into(),
+                install_root: String::new(),
+                doctor: crate::manifest::DoctorSpec {
+                    program: "node.exe".into(),
+                    args: vec!["--version".into()],
+                    timeout_seconds: 30,
+                },
+                licenses: Vec::new(),
+            }],
+        }
+    }
+
+    #[test]
+    fn staged_activation_switches_current_and_removes_pending_state() {
+        let root = tempdir().expect("temp");
+        let paths = test_paths(root.path());
+        let manager = RuntimeManager::new(paths.clone()).expect("manager");
+        paths.create().expect("paths");
+        let manifest = test_manifest("1.3.0");
+        let runtime_root = paths.runtimes.join("1.3.0");
+        fs::create_dir_all(&runtime_root).expect("runtime");
+        materialize_bridge_files(&runtime_root).expect("bridge");
+        let staged = StagedRelease {
+            release: manifest.release.clone(),
+            manifest_sha256: "b".repeat(64),
+            manifest_snapshot_sha256: manifest_snapshot_sha256(&manifest).expect("snapshot"),
+            manifest,
+        };
+        manager.write_staged(&staged).expect("staged");
+        manager
+            .activate_staged_with(|_, _| Ok(()))
+            .expect("activate");
+        assert_eq!(
+            manager
+                .read_current()
+                .expect("current")
+                .expect("pointer")
+                .release,
+            "1.3.0"
+        );
+        assert!(manager.read_staged().expect("staged").is_none());
+    }
+
+    #[test]
+    fn staged_activation_failure_keeps_existing_current() {
+        let root = tempdir().expect("temp");
+        let paths = test_paths(root.path());
+        let manager = RuntimeManager::new(paths.clone()).expect("manager");
+        paths.create().expect("paths");
+        let current_manifest = test_manifest("1.2.0");
+        manager
+            .write_current(&CurrentRelease {
+                release: current_manifest.release.clone(),
+                manifest_sha256: "c".repeat(64),
+                manifest: Some(current_manifest),
+                manifest_snapshot_sha256: None,
+            })
+            .expect("current");
+        let manifest = test_manifest("1.3.0");
+        let runtime_root = paths.runtimes.join("1.3.0");
+        fs::create_dir_all(&runtime_root).expect("runtime");
+        materialize_bridge_files(&runtime_root).expect("bridge");
+        manager
+            .write_staged(&StagedRelease {
+                release: manifest.release.clone(),
+                manifest_sha256: "d".repeat(64),
+                manifest_snapshot_sha256: manifest_snapshot_sha256(&manifest).expect("snapshot"),
+                manifest,
+            })
+            .expect("staged");
+        assert!(
+            manager
+                .activate_staged_with(|_, _| bail!("doctor failed"))
+                .is_err()
+        );
+        assert_eq!(
+            manager
+                .read_current()
+                .expect("current")
+                .expect("pointer")
+                .release,
+            "1.2.0"
+        );
+        assert!(manager.read_staged().expect("staged").is_some());
+    }
+
+    #[test]
+    fn forward_repair_record_is_atomic_and_clearable() {
+        let root = tempdir().expect("temp");
+        let paths = test_paths(root.path());
+        let manager = RuntimeManager::new(paths.clone()).expect("manager");
+        paths.create().expect("paths");
+        manager
+            .record_forward_repair("1.3.0", "start", "doctor failed")
+            .expect("repair");
+        let record = manager.read_repair().expect("read").expect("record");
+        assert_eq!(record.release, "1.3.0");
+        assert_eq!(record.phase, "start");
+        manager.clear_repair().expect("clear");
+        assert!(manager.read_repair().expect("read").is_none());
     }
 }

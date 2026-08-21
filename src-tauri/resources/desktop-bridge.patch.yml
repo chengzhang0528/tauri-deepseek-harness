@@ -1,2 +1,3 @@
-- id: dsh-desktop-bridge
-  name: ./desktop-bridge.mjs
+- insert:
+    - id: dsh-desktop-bridge
+      name: __DSH_DESKTOP_BRIDGE_MODULE__
