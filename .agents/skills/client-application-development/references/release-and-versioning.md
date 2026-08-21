@@ -25,9 +25,9 @@ Each candidate should have:
 
 Do not overwrite an existing tag or asset. Do not publish a pointer before all referenced immutable assets are readable and verified. A release workflow may be triggered by a version tag, a protected manual dispatch, or an approved API action, but the trigger must not bypass deployment authorization.
 
-## Fixed Aliyun OSS Publication
+## Immutable Binary Publication
 
-Use the `https` scheme with the fixed OSS host `shared-public-assets.oss-cn-beijing.aliyuncs.com`; publish workspace-owned Installer, manifest, payload, checksum, and third-party fallback objects only below `<project-prefix>/`. Give every immutable artifact one versioned object key, size, SHA-256, platform, architecture, and signing/provenance identity, then read it back anonymously before exposing it.
+Use the configured immutable binary source and the project's collision-free prefix; load [workspace-delivery-defaults.md](workspace-delivery-defaults.md) for this workspace's host, signing, and publication policy. Give every immutable artifact one versioned object key, size, SHA-256, platform, architecture, and signing/provenance identity, then read it back anonymously before exposing it.
 
 GitHub may hold source, tags, release notes, and optional automation. Do not attach release binaries or preserve duplicate binary assets there. Release-note download links point to the immutable public OSS objects. A GitHub Workflow may invoke the same local publisher but must not become the sole release owner.
 

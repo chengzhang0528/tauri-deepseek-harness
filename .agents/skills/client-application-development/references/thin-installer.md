@@ -1,6 +1,6 @@
 # Thin Installer Reference
 
-This reference defines the default thin-installer architecture for managed desktop clients with large or frequently updated payloads. Use the `https` scheme with the fixed OSS host `shared-public-assets.oss-cn-beijing.aliyuncs.com` and publish all workspace-owned binaries below `<project-prefix>/`; adapt only the project prefix, object names, schema version, platform list, and component identities.
+This reference defines the default thin-installer architecture for managed desktop clients with large or frequently updated payloads. Resolve the distribution endpoint and project prefix from the product/workspace contract; load [workspace-delivery-defaults.md](workspace-delivery-defaults.md) when this workspace's fixed OSS policy applies.
 
 ## 1. Decision Boundary
 Choose a thin installer when the application contains a large runtime or independently replaceable components and can require a network bootstrap after installation. Use a full installer only when an explicit offline-install, store, one-file, or first-run network prohibition requires it. Use a hybrid only when the formal contract identifies the minimum offline fallback.
@@ -27,11 +27,11 @@ Thin delivery optimizes the first quantity and component reuse. It does not prom
 The launcher must be a small, stable executable or equivalent platform helper. The running client cannot reliably replace its own executable or loaded libraries.
 
 ## 3. Assets And Contracts
-Use immutable versioned assets under the fixed OSS bucket and one collision-free project prefix:
+Use immutable versioned assets under the configured binary source and one collision-free project prefix:
 
 ```text
-scheme: https
-host: shared-public-assets.oss-cn-beijing.aliyuncs.com
+scheme: <configured scheme>
+host: <configured host>
 root: <project-prefix>/
   bootstrap/<platform>-<arch>.json
   installers/<installer-version>/<platform>-<arch>/<installer>

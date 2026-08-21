@@ -1,6 +1,6 @@
 # Technology And Update Channels
 
-Use this reference when selecting a client stack, building an installer, publishing fixed Aliyun OSS assets, or designing in-app updates. Resolve the actual project contract first, then apply the fixed workspace delivery defaults for every workspace-owned client binary.
+Use this reference when selecting a client stack, building an installer, or designing in-app updates. Resolve the actual project contract first. When fixed OSS host, prefix, signing, or publication policy is in scope, also load [workspace-delivery-defaults.md](workspace-delivery-defaults.md).
 
 ## Select The Stack
 
@@ -29,9 +29,9 @@ Use the project's established builder first. Common candidates to verify against
 
 On Windows, use a current-user MSI by default when the product owns no Service, driver, machine-wide shared resource, or privileged prerequisite. Escalate to machine-wide installation only for a verified platform requirement. After `InstallFinalize`, run one Launcher setup; request normal shutdown for old product processes, wait five seconds, and terminate only executables verified inside the installation root. Preserve registration, settings, and business state across repair and in-place upgrade.
 
-## Publish Fixed Aliyun OSS Assets
+## Publish The Configured Immutable Source
 
-Use the `https` scheme with the fixed OSS host `shared-public-assets.oss-cn-beijing.aliyuncs.com`; publish every workspace-owned Installer, Bootstrap, manifest, component payload, checksum, and third-party fallback below `<project-prefix>/`. GitHub may hold source, tags, release notes, and optional automation, but it must not store release binaries.
+Use the configured immutable binary source and the project's collision-free prefix; the workspace-specific host and publication policy are defined in [workspace-delivery-defaults.md](workspace-delivery-defaults.md). GitHub may hold source, tags, release notes, and optional automation, but it must not store release binaries when the workspace policy selects OSS.
 
 Use one frozen candidate and one OSS publication transaction:
 
