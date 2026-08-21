@@ -1,6 +1,6 @@
 # Thin Installer Reference
 
-This reference defines the default thin-installer architecture for managed desktop clients with large or frequently updated payloads. Resolve the distribution endpoint and project prefix from the product/workspace contract; load [workspace-delivery-defaults.md](workspace-delivery-defaults.md) when this workspace's fixed OSS policy applies.
+This reference defines the default thin-installer architecture for managed desktop clients with large or frequently updated payloads. Resolve the distribution endpoint and project prefix from the product/workspace contract; load [distribution-and-signing.md](distribution-and-signing.md) when source or signing policy affects delivery.
 
 ## 1. Decision Boundary
 Choose a thin installer when the application contains a large runtime or independently replaceable components and can require a network bootstrap after installation. Use a full installer only when an explicit offline-install, store, one-file, or first-run network prohibition requires it. Use a hybrid only when the formal contract identifies the minimum offline fallback.

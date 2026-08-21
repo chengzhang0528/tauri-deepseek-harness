@@ -27,7 +27,7 @@ Do not overwrite an existing tag or asset. Do not publish a pointer before all r
 
 ## Immutable Binary Publication
 
-Use the configured immutable binary source and the project's collision-free prefix; load [workspace-delivery-defaults.md](workspace-delivery-defaults.md) for this workspace's host, signing, and publication policy. Give every immutable artifact one versioned object key, size, SHA-256, platform, architecture, and signing/provenance identity, then read it back anonymously before exposing it.
+Use the configured immutable binary source and the project's collision-free prefix; load [distribution-and-signing.md](distribution-and-signing.md) for generic source, signing, and publication rules, then apply any project-specific owner policy. Give every immutable artifact one versioned object key, size, SHA-256, platform, architecture, and signing/provenance identity, then read it back anonymously before exposing it.
 
 GitHub may hold source, tags, release notes, and optional automation. Do not attach release binaries or preserve duplicate binary assets there. Release-note download links point to the immutable public OSS objects. A GitHub Workflow may invoke the same local publisher but must not become the sole release owner.
 

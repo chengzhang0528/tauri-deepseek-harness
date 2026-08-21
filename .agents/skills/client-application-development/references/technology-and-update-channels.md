@@ -1,6 +1,6 @@
 # Technology And Update Channels
 
-Use this reference when selecting a client stack, building an installer, or designing in-app updates. Resolve the actual project contract first. When fixed OSS host, prefix, signing, or publication policy is in scope, also load [workspace-delivery-defaults.md](workspace-delivery-defaults.md).
+Use this reference when selecting a client stack, building an installer, or designing in-app updates. Resolve the actual project contract first. When source, signing, or publication policy is in scope, also load [distribution-and-signing.md](distribution-and-signing.md); project-specific overrides remain with their configured owner.
 
 ## Select The Stack
 
@@ -31,7 +31,7 @@ On Windows, use a current-user MSI by default when the product owns no Service, 
 
 ## Publish The Configured Immutable Source
 
-Use the configured immutable binary source and the project's collision-free prefix; the workspace-specific host and publication policy are defined in [workspace-delivery-defaults.md](workspace-delivery-defaults.md). GitHub may hold source, tags, release notes, and optional automation, but it must not store release binaries when the workspace policy selects OSS.
+Use the configured immutable binary source and the project's collision-free prefix; the host and publication policy are defined by the project/workspace owner. GitHub may hold source, tags, release notes, and optional automation, but it must not store release binaries when the selected policy disallows them.
 
 Use one frozen candidate and one OSS publication transaction:
 

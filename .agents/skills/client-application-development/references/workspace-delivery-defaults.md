@@ -1,6 +1,6 @@
 # Workspace Delivery Defaults
 
-This reference contains workspace-specific distribution policy. It is not a generic client rule and must be loaded only when release, OSS publication, signing, or immutable binary delivery is in scope.
+This optional reference contains this workspace's distribution policy. It is not part of the portable client method and must not be copied into a template workspace unless that workspace has the same explicit owner and policy.
 
 ## Binary Origin
 

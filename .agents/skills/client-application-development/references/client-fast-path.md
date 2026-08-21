@@ -42,7 +42,7 @@ If the UI owner is another product, the shell may own native lifecycle and diagn
 | Payload is large or replaceable | measured installer, first-run, and installed sizes; offline requirement | thin-installer.md |
 | Client owns a private runtime | final archive/tree, ABI, native modules, readiness, process cleanup | managed-runtime-acceptance.md |
 | Windows packaging is in scope | installer scope, privileges, prerequisites, repair/upgrade/uninstall | platform-windows.md |
-| Release or publication is in scope | version owner, immutable assets, source admission, signing | release-and-versioning.md + workspace-delivery-defaults.md |
+| Release or publication is in scope | version owner, immutable assets, source admission, signing | release-and-versioning.md + distribution-and-signing.md |
 | Only local Development is in scope | source/types/tests, final candidate, installed executable | client-verification-matrix.md |
 
 Load one row's references first. Add another only when the decision reaches that boundary.

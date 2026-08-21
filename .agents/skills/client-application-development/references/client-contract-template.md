@@ -40,7 +40,7 @@ Silence, repetition, prior-plan inclusion, and copied wording do not turn an ass
 | User-visible product behavior | ProductContract and source | skill or installer reference |
 | Capability architecture | CurrentDesign and source/tests | product contract or generic skill |
 | Commands and recovery procedure | Runbook | skill or README copy |
-| Workspace delivery defaults | workspace-delivery-defaults.md | ProductContract or main skill |
+| Distribution and signing policy | distribution-and-signing.md plus the project's configured source owner | ProductContract or main skill |
 | Reusable client method | client-application-development/SKILL.md | project docs |
 | Platform or delivery variant | the relevant reference | main skill |
 | Authorized recoverable activity | TASK_CONTROL and its plan | ProductContract or skill |

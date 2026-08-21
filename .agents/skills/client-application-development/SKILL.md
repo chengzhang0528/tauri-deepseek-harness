@@ -37,7 +37,7 @@ Resolve each field from the authority shown below. Keep working assumptions visi
 | Install source | Which installer, package manager, store, or official framework path owns install and repair? | ProductContract + platform reference |
 | Runtime owner | Which component owns executable preparation, health, and process cleanup? | CurrentDesign + source |
 | Update owner | Which official mechanism updates each independently versioned component? | CurrentDesign + technology reference |
-| Distribution | Is this self-use, internal, controlled, or explicit production promotion? | User request + workspace defaults reference |
+| Distribution | Is this self-use, internal, controlled, or explicit production promotion? | User request + ProductContract/Runbook or distribution reference |
 | Recovery | Is post-activation recovery automatic rollback or forward repair? | ProductContract/CurrentDesign |
 | Completion | What observable result completes this task? | User request |
 
@@ -73,7 +73,7 @@ Choose the existing framework/package-manager/platform path before introducing a
 - [lifecycle.md](references/lifecycle.md) for state ownership, drain, activation, and recovery.
 - [managed-runtime-acceptance.md](references/managed-runtime-acceptance.md) when the client owns a private runtime, native modules, a long-lived child process, or a generated bridge.
 - [platform-windows.md](references/platform-windows.md) for Windows installer, hidden process, WebView2, upgrade, and uninstall behavior.
-- [release-and-versioning.md](references/release-and-versioning.md) and [workspace-delivery-defaults.md](references/workspace-delivery-defaults.md) only when release, OSS, signing, or immutable publication is in scope.
+- [release-and-versioning.md](references/release-and-versioning.md) and [distribution-and-signing.md](references/distribution-and-signing.md) only when release, signing, or immutable publication is in scope.
 
 Do not read every reference by default. The fast path selects the smallest set.
 
@@ -109,7 +109,7 @@ Stop before implementation when any of these cannot be resolved from the user, p
 - final candidate bytes, installed behavior, or required health evidence cannot be observed;
 - a required signature, credential, or platform prerequisite is missing for the selected production/channel contract.
 
-Missing self-use publisher credentials do not block local Development when no production admission requires them; the workspace distribution reference defines the exact exception.
+Missing self-use publisher credentials do not block local Development when no production admission requires them; the selected distribution owner defines the exact exception.
 
 ## Report And Close
 
