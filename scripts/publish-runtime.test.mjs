@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -11,7 +11,7 @@ function digest(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
-async function fixture({ release = '0.1.3', minimumLauncher = '0.1.1' } = {}) {
+async function fixture({ release = '0.1.3', minimumLauncher = '0.1.1', withCatalog = false } = {}) {
   const output = await mkdtemp(join(tmpdir(), 'dsh-runtime-publish-'))
   const archive = Buffer.from('verified runtime archive')
   const archiveKey = `releases/${release}/windows-x64/runtime.zip`
@@ -33,6 +33,19 @@ async function fixture({ release = '0.1.3', minimumLauncher = '0.1.1' } = {}) {
     schema: 1, product: 'atlas-dsh-desktop', platform: 'windows', arch: 'x64', release, minimumLauncher,
     manifest: { objectKey: manifestKey, bytes: manifestBytes.length, sha256: digest(manifestBytes) },
   }
+  if (withCatalog) {
+    const catalogKey = `catalog/${release}/windows-x64/catalog.json`
+    const catalogBytes = Buffer.from(`${JSON.stringify({
+      schema: 1,
+      product: 'atlas-dsh-desktop',
+      platform: 'windows',
+      arch: 'x64',
+      releases: [{ release, minimumLauncher, manifest: bootstrap.manifest }],
+    }, null, 2)}\n`)
+    await mkdir(join(output, 'catalog', release, 'windows-x64'), { recursive: true })
+    await writeFile(join(output, ...catalogKey.split('/')), catalogBytes)
+    bootstrap.catalog = { objectKey: catalogKey, bytes: catalogBytes.length, sha256: digest(catalogBytes) }
+  }
   await mkdir(join(output, 'bootstrap'), { recursive: true })
   await writeFile(join(output, ...BOOTSTRAP_KEY.split('/')), `${JSON.stringify(bootstrap, null, 2)}\n`)
   return { output, manifestPath: join(output, ...manifestKey.split('/')), bootstrapPath: join(output, ...BOOTSTRAP_KEY.split('/')) }
@@ -49,6 +62,23 @@ test('accepts a runtime release above the minimum compatible Launcher', async ()
   const { output } = await fixture({ release: '0.1.3', minimumLauncher: '0.1.1' })
   const publication = await loadPublication(output)
   assert.equal(publication.archive.key, 'releases/0.1.3/windows-x64/runtime.zip')
+})
+
+test('accepts an immutable catalog closure and current entry', async () => {
+  const { output } = await fixture({ withCatalog: true })
+  const publication = await loadPublication(output)
+  assert.equal(publication.catalog.key, 'catalog/0.1.3/windows-x64/catalog.json')
+})
+
+test('rejects a catalog whose current entry disagrees with Bootstrap', async () => {
+  const { output, bootstrapPath } = await fixture({ withCatalog: true })
+  const bootstrap = JSON.parse(await readFile(bootstrapPath, 'utf8'))
+  const catalogPath = join(output, ...bootstrap.catalog.objectKey.split('/'))
+  const catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
+  catalog.releases[0].minimumLauncher = '0.1.2'
+  const catalogBytes = Buffer.from(`${JSON.stringify(catalog, null, 2)}\n`)
+  await writeFile(catalogPath, catalogBytes)
+  await assert.rejects(loadPublication(output), /catalog bytes or SHA-256|current entry/)
 })
 
 test('rejects a manifest whose runtime digest does not match its archive', async () => {

@@ -60,9 +60,11 @@ doctor 必须同时通过 `node --version`、`rg --version`、`dsh --version`、
 node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release 0.1.1 --minimum-launcher-version 0.1.1 --output-dir $runtimeOutput
 ```
 
+发布新 runtime 时，发布工作流会先读取并校验现有 OSS Bootstrap 指向的 immutable catalog，再将其路径传给 `--catalog-input`；本地首次 Development 构建可省略该参数，脚本会生成只包含当前 release 的 catalog。输出目录会同时包含 `releases/<release>/windows-x64/` 下的 runtime ZIP/manifest 和 `catalog/<release>/windows-x64/catalog.json`。客户端不会查询 npm，也不会把 npm 上游发布直接视为更新；只有进入已校验 runtime closure 并登记到 catalog 的版本才可能被选择。
+
 构建机无法连接上游 ripgrep 下载地址时，先从固定上游取得 `ripgrep-15.2.0-x86_64-pc-windows-msvc.zip`，再将本地路径传给 `--ripgrep-zip`。脚本仍会校验 `runtime-versions.windows-x64.json` 中的 SHA-256；不匹配的文件不会进入 closure。
 
-命令会报告 ZIP 字节数和 SHA-256；`$runtimeOutput` 只是本地 Development 制品目录，不会上传 OSS，也不会自动改写仓库内的 seed 文件。将生成的 manifest、bootstrap 和 ZIP 按 [产品契约](../../文档/项目/项目_atlas_dsh_desktop/ProductContract.md) 的 `atlas-dsh-desktop/` 前缀发布，需要另行授权 Deployment。
+命令会报告 ZIP 字节数和 SHA-256；`$runtimeOutput` 只是本地 Development 制品目录，不会上传 OSS，也不会自动改写仓库内的 seed 文件。将生成的 manifest、catalog、bootstrap 和 ZIP 按 [产品契约](../../文档/项目/项目_atlas_dsh_desktop/ProductContract.md) 的 `atlas-dsh-desktop/` 前缀发布，需要另行授权 Deployment。Bootstrap 仍保留顶层 manifest，供旧 Launcher 回退；新 Launcher 从 catalog 选择最高兼容版本，不降级。
 
 ## 安装启动
 

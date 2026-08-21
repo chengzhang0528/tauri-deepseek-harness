@@ -44,6 +44,47 @@ jobs:
         shell: pwsh
         run: rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
 
+      - name: Load existing immutable runtime catalog
+        shell: pwsh
+        run: |
+          $catalogInput = Join-Path $env:RUNNER_TEMP "dsh-runtime-catalog-$env:RELEASE_VERSION.json"
+          $bootstrapUrl = "https://shared-public-assets.oss-cn-beijing.aliyuncs.com/atlas-dsh-desktop/bootstrap/windows-x64.json"
+          $bootstrapResponse = Invoke-WebRequest -Uri $bootstrapUrl -UseBasicParsing -SkipHttpErrorCheck
+          if ($bootstrapResponse.StatusCode -eq 404) {
+            @{
+              schema = 1
+              product = "atlas-dsh-desktop"
+              platform = "windows"
+              arch = "x64"
+              releases = @()
+            } | ConvertTo-Json -Depth 5 | Set-Content -Path $catalogInput -Encoding utf8
+          } elseif ($bootstrapResponse.StatusCode -lt 200 -or $bootstrapResponse.StatusCode -ge 300) {
+            throw "Existing OSS bootstrap could not be read: HTTP $($bootstrapResponse.StatusCode)"
+          } else {
+            $bootstrap = $bootstrapResponse.Content | ConvertFrom-Json
+            if (-not $bootstrap.catalog) {
+              @{
+                schema = 1
+                product = "atlas-dsh-desktop"
+                platform = "windows"
+                arch = "x64"
+                releases = @()
+              } | ConvertTo-Json -Depth 5 | Set-Content -Path $catalogInput -Encoding utf8
+            } else {
+              $catalogUrl = "https://shared-public-assets.oss-cn-beijing.aliyuncs.com/atlas-dsh-desktop/$($bootstrap.catalog.objectKey)"
+              $catalogResponse = Invoke-WebRequest -Uri $catalogUrl -UseBasicParsing -SkipHttpErrorCheck
+              if ($catalogResponse.StatusCode -lt 200 -or $catalogResponse.StatusCode -ge 300) {
+                throw "Existing OSS catalog could not be read: HTTP $($catalogResponse.StatusCode)"
+              }
+              [IO.File]::WriteAllBytes($catalogInput, [Text.Encoding]::UTF8.GetBytes($catalogResponse.Content))
+              $identity = Get-FileHash -Algorithm SHA256 -Path $catalogInput
+              if ((Get-Item $catalogInput).Length -ne [int64]$bootstrap.catalog.bytes -or $identity.Hash.ToLowerInvariant() -ne $bootstrap.catalog.sha256.ToLowerInvariant()) {
+                throw "Existing OSS catalog does not match Bootstrap digest"
+              }
+            }
+          }
+          "CATALOG_INPUT=$catalogInput" >> $env:GITHUB_ENV
+
       - name: Build MSI
         run: npm run release:tag -- --tag "$env:GITHUB_REF_NAME"
 
@@ -55,7 +96,7 @@ jobs:
           $runtimeOutput = Join-Path $env:RUNNER_TEMP "dsh-runtime-output-$env:RELEASE_VERSION"
           npm run prepare:runtime -- --runtime-root $runtimeRoot --work-dir $runtimeWork
           if ($LASTEXITCODE -ne 0) { throw "Runtime closure preparation failed" }
-          node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release $env:RELEASE_VERSION --minimum-launcher-version $env:MINIMUM_LAUNCHER_VERSION --output-dir $runtimeOutput
+          node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release $env:RELEASE_VERSION --minimum-launcher-version $env:MINIMUM_LAUNCHER_VERSION --catalog-input $env:CATALOG_INPUT --output-dir $runtimeOutput
           if ($LASTEXITCODE -ne 0) { throw "Runtime closure verification and archive build failed" }
           "RUNTIME_OUTPUT=$runtimeOutput" >> $env:GITHUB_ENV
 

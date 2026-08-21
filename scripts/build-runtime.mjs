@@ -41,6 +41,77 @@ function required(values, name) {
   return resolve(value)
 }
 
+function compareReleases(left, right) {
+  const parse = (value) => {
+    const separator = value.indexOf('-')
+    const core = separator === -1 ? value : value.slice(0, separator)
+    const prerelease = separator === -1 ? null : value.slice(separator + 1)
+    const numbers = core.split('.').map((part) => Number(part))
+    return { numbers, prerelease: prerelease ? prerelease.split('.') : [] }
+  }
+  const a = parse(left)
+  const b = parse(right)
+  for (let index = 0; index < 3; index += 1) {
+    if (a.numbers[index] !== b.numbers[index]) return a.numbers[index] - b.numbers[index]
+  }
+  if (a.prerelease.length === 0 && b.prerelease.length > 0) return 1
+  if (a.prerelease.length > 0 && b.prerelease.length === 0) return -1
+  for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
+    if (index >= a.prerelease.length) return -1
+    if (index >= b.prerelease.length) return 1
+    const leftPart = a.prerelease[index]
+    const rightPart = b.prerelease[index]
+    const leftNumeric = /^\d+$/.test(leftPart)
+    const rightNumeric = /^\d+$/.test(rightPart)
+    if (leftNumeric && rightNumeric && Number(leftPart) !== Number(rightPart)) return Number(leftPart) - Number(rightPart)
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1
+    if (leftPart !== rightPart) return leftPart < rightPart ? -1 : 1
+  }
+  return 0
+}
+
+function validateCatalogEntry(entry, label) {
+  if (!entry || !RELEASE_VERSION.test(entry.release ?? '') || !RELEASE_VERSION.test(entry.minimumLauncher ?? '')) {
+    throw new Error(`${label} release compatibility is invalid`)
+  }
+  if (!entry.manifest || typeof entry.manifest.objectKey !== 'string' || !Number.isSafeInteger(entry.manifest.bytes) || entry.manifest.bytes <= 0 || !/^[0-9a-f]{64}$/i.test(entry.manifest.sha256 ?? '')) {
+    throw new Error(`${label} manifest asset is invalid`)
+  }
+}
+
+export function mergeCatalogEntries(existingEntries, currentEntry) {
+  const entries = existingEntries.map((entry, index) => {
+    validateCatalogEntry(entry, `catalog entry ${index}`)
+    return {
+      release: entry.release,
+      minimumLauncher: entry.minimumLauncher,
+      manifest: { ...entry.manifest },
+    }
+  })
+  const seen = new Set()
+  for (const entry of entries) {
+    if (!seen.add(entry.release)) throw new Error(`catalog input contains duplicate release ${entry.release}`)
+  }
+  validateCatalogEntry(currentEntry, 'current catalog entry')
+  if (seen.has(currentEntry.release)) throw new Error(`catalog already contains release ${currentEntry.release}`)
+  entries.push({
+    release: currentEntry.release,
+    minimumLauncher: currentEntry.minimumLauncher,
+    manifest: { ...currentEntry.manifest },
+  })
+  return entries.sort((left, right) => compareReleases(left.release, right.release))
+}
+
+async function readCatalogInput(values) {
+  const input = values.get('catalog-input')
+  if (!input) return []
+  const parsed = JSON.parse(await readFile(resolve(input), 'utf8'))
+  if (parsed?.schema !== 1 || parsed.product !== 'atlas-dsh-desktop' || parsed.platform !== 'windows' || parsed.arch !== 'x64' || !Array.isArray(parsed.releases)) {
+    throw new Error('catalog input must be a release catalog for atlas-dsh-desktop windows-x64')
+  }
+  return parsed.releases
+}
+
 async function digest(path) {
   const hash = createHash('sha256')
   let bytes = 0
@@ -155,6 +226,25 @@ async function main() {
   const manifestPath = join(releaseDir, 'manifest.json')
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
   const manifestDigest = await digest(manifestPath)
+  const catalogEntries = mergeCatalogEntries(await readCatalogInput(values), {
+    release,
+    minimumLauncher: minimumLauncherVersion,
+    manifest: {
+      objectKey: `releases/${release}/windows-x64/manifest.json`,
+      ...manifestDigest,
+    },
+  })
+  const catalog = {
+    schema: 1,
+    product: 'atlas-dsh-desktop',
+    platform: 'windows',
+    arch: 'x64',
+    releases: catalogEntries,
+  }
+  const catalogPath = join(outputDir, 'catalog', release, 'windows-x64', 'catalog.json')
+  await mkdir(join(outputDir, 'catalog', release, 'windows-x64'), { recursive: true })
+  await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8')
+  const catalogDigest = await digest(catalogPath)
   const bootstrap = {
     schema: 1,
     product: 'atlas-dsh-desktop',
@@ -165,6 +255,10 @@ async function main() {
     manifest: {
       objectKey: `releases/${release}/windows-x64/manifest.json`,
       ...manifestDigest,
+    },
+    catalog: {
+      objectKey: `catalog/${release}/windows-x64/catalog.json`,
+      ...catalogDigest,
     },
   }
   const bootstrapPath = join(outputDir, 'bootstrap', 'windows-x64.json')

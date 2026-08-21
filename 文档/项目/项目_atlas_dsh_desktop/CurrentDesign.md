@@ -67,7 +67,7 @@ root: atlas-dsh-desktop/
   third-party/<component>/windows-x64/<sha256>/<upstream-file>
 ```
 
-Bootstrap 是唯一可变指针。Manifest 至少包含 schema、release、platform、arch、minimumLauncher、组件 ID/版本、精确 object key、归档规则、安装根、字节数、SHA-256、来源/签名要求、doctor 命令与超时、许可证引用。对象键不可由文件名猜测，不使用目录 List、npm registry 或 GitHub Release 作为运行期回退源。
+Bootstrap 是唯一可变入口；它保留顶层 `release`、`minimumLauncher` 和 `manifest` 作为旧 Launcher 的兼容回退，并可指向一个 immutable release catalog。Catalog 对象按 `catalog/<catalog-release>/windows-x64/catalog.json` 发布，包含多个 runtime 候选及各自的 `release`、`minimumLauncher` 和 manifest AssetRef；客户端按本地 Launcher 版本过滤，跳过低于当前 runtime 的候选，选择最高兼容版本，普通 runtime 更新不要求重装 Launcher。Catalog 自身通过 Bootstrap AssetRef 校验，发布后不得覆盖。对象键不可由文件名猜测，不使用目录 List、npm registry 或 GitHub Release 作为运行期回退源。
 
 所有组件在冻结候选前于 Windows x64 构建：`node-pty`、`koffi`、`sharp` 等原生依赖必须在目标 Node ABI 上加载通过；ripgrep 执行 `--version`；dsh 执行 `--version` 并完成一次随机端口启动 doctor。用户机器不运行编译器和 `npm install`。
 
@@ -96,7 +96,7 @@ API Key、Token、任务正文、审批理由和完整模型输出不得进入�
 ## 启动与身份确认
 
 1. Launcher 获取进程级互斥锁，读取内置 seed Bootstrap，再尝试读取公共 Bootstrap。
-2. 按 manifest 探测当前 release；缺失时下载至私有 `.part`，限制最大字节数并支持取消。
+2. 读取公共 Bootstrap；若存在 catalog，则下载并校验 immutable catalog，按本地 Launcher 兼容性和当前 release 选择最高候选；无 catalog 时使用顶层 manifest 作为单候选回退。探测候选 release；缺失时下载至私有 `.part`，限制最大字节数并支持取消。
 3. 依次校验字节数、SHA-256、平台、架构和 provenance；用生产解包器拒绝绝对路径、`..`、重复项、链接和越界目标。
 4. 在全新 staging 中执行全部 doctor，成功后原子写入 `current.json`；失败只清理当前 staging。
 5. Rust 后端以 `CREATE_NO_WINDOW` 启动私有 Node，设置独立 `DSH_HOME`，保留 stdin 控制通道，并传入 `dsh web --port 0 --no-open`。
@@ -127,7 +127,7 @@ bridge 只为桌面进程退出和更新激活提供活动工作数与 drain，�
 
 ## 更新和恢复
 
-Launcher 启动时以及 Native Host 运行期间约每六小时检查一次。后台只下载、校验、doctor 和暂存兼容 runtime；不创建 Service 或计划任务，不自动激活，不强关活动任务。
+Launcher 启动时以及 Native Host 运行期间约每六小时检查一次。后台读取 Bootstrap/catalog，只下载、校验、doctor 和暂存最高兼容 runtime；不创建 Service 或计划任务，不自动激活，不强关活动任务。若 catalog 暂时没有兼容候选，已有 current runtime 继续使用，不降级；没有可用 current runtime 才报告准备失败。
 
 托盘中的单一更新菜单项按 `检查更新 -> 下载/暂存 -> 等待任务 -> 确认重启 -> 激活` 变换意图，进度、确认和失败由原生 TaskDialog/系统通知表达，不在 dsh 页面增加控件。激活前重新校验 manifest、digest、Launcher 兼容性和活动任务数，原子切换 `current.json` 后启动新 runtime，完成 Harness 身份检查并确认 dsh 页面可加载。
 
@@ -140,7 +140,7 @@ Launcher 启动时以及 Native Host 运行期间约每六小时检查一次。�
 3. 构建固定 Windows x64 runtime 闭包和 desktop bridge，冻结 Node ABI 与原生模块；禁止用户机器 npm 安装。
 4. 实现随机端口启动、Harness 身份确认、隐藏进程、Job Object、健康监控和有界重启；只有 ready 后才动态创建直接加载 dsh URL 的 WebView。
 5. 实现原生托盘、TaskDialog、活动任务 drain、显式退出与强退边界，再接入更新暂存和确认激活；不向 dsh 页面添加桌面端交互。
-6. 使用 Tauri 官方 WiX/MSI 构建链和项目级 WiX 模板生成当前用户薄安装器，加入 seed Bootstrap、WebView2 探测、许可证、修复和卸载边界；匹配 `vX.Y.Z` 版本 Tag 时由 GitHub Actions 调用 `release:tag`，MSI/Launcher 使用该 Tag 版本，runtime 闭包另以独立 `release` 和显式兼容下限构建。先将 immutable runtime ZIP/manifest 上传、匿名回读，再提交 OSS Bootstrap，最后将 MSI 上传同名 GitHub Release。发布工作流只从 `oss-release` Environment Secrets 获取 OSS 写凭据，运行客户端不持有写权限。生成 MSI 若注册为 per-machine 或要求提升权限，立即阻断打包，不并行增加第二套安装器。
+6. 使用 Tauri 官方 WiX/MSI 构建链和项目级 WiX 模板生成当前用户薄安装器，加入 seed Bootstrap、WebView2 探测、许可证、修复和卸载边界；匹配 `vX.Y.Z` 版本 Tag 时由 GitHub Actions 调用 `release:tag`，MSI/Launcher 使用该 Tag 版本，runtime 闭包另以独立 `release` 和显式兼容下限构建。发布工作流先读取并校验已有 catalog（无 catalog 时建立空 seed），再将 immutable runtime ZIP、manifest、catalog 按顺序上传并匿名回读，最后提交 OSS Bootstrap，最后将 MSI 上传同名 GitHub Release。发布失败不得静默丢弃已有 catalog 历史。发布工作流只从 `oss-release` Environment Secrets 获取 OSS 写凭据，运行客户端不持有写权限。生成 MSI 若注册为 per-machine 或要求提升权限，立即阻断打包，不并行增加第二套安装器。
 
 不得照搬参考项目的系统 Node 复用、Node 最新版解析、`@latest`、固定 3080、TCP-only ready、`taskkill /T /F` 日常退出、完整 stdout 日志或将 runtime payload 发布到 GitHub Release 作为运行期下载源。
 

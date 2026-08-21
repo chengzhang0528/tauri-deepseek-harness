@@ -84,6 +84,13 @@ function assertRelease(value, label) {
   if (!VERSION.test(value ?? '')) fail(`${label} is invalid`)
 }
 
+function assertCatalogEntry(entry, label) {
+  if (!entry || !VERSION.test(entry.release ?? '') || !VERSION.test(entry.minimumLauncher ?? '')) {
+    fail(`${label} release compatibility is invalid`)
+  }
+  assertAsset(entry.manifest, `${label} manifest`)
+}
+
 function resolveOutputFile(outputDir, objectKey) {
   const path = resolve(outputDir, ...objectKey.split('/'))
   if (!path.startsWith(`${outputDir}\\`) && path !== outputDir) fail(`object path escapes output directory: ${objectKey}`)
@@ -100,6 +107,7 @@ export async function loadPublication(outputDir) {
   assertRelease(bootstrap.release, 'runtime bootstrap release')
   assertRelease(bootstrap.minimumLauncher, 'runtime bootstrap minimum launcher')
   assertAsset(bootstrap.manifest, 'runtime bootstrap manifest')
+  if (bootstrap.catalog !== undefined) assertAsset(bootstrap.catalog, 'runtime bootstrap catalog')
 
   const manifestPath = resolveOutputFile(outputDir, bootstrap.manifest.objectKey)
   const manifest = await readJson(manifestPath, 'runtime manifest')
@@ -132,10 +140,36 @@ export async function loadPublication(outputDir) {
     fail('runtime archive bytes or SHA-256 do not match manifest')
   }
 
+  let catalog = null
+  if (bootstrap.catalog) {
+    const catalogPath = resolveOutputFile(outputDir, bootstrap.catalog.objectKey)
+    const catalogValue = await readJson(catalogPath, 'runtime release catalog')
+    if (catalogValue?.schema !== 1) fail('runtime release catalog schema is unsupported')
+    for (const [label, value] of Object.entries({ product: catalogValue.product, platform: catalogValue.platform, arch: catalogValue.arch })) {
+      assertTarget(value, label)
+    }
+    if (!Array.isArray(catalogValue.releases) || catalogValue.releases.length === 0) fail('runtime release catalog must contain releases')
+    const seen = new Set()
+    for (const [index, entry] of catalogValue.releases.entries()) {
+      assertCatalogEntry(entry, `runtime catalog entry ${index}`)
+      if (!seen.add(entry.release)) fail(`runtime release catalog contains duplicate release ${entry.release}`)
+    }
+    const current = catalogValue.releases.find((entry) => entry.release === bootstrap.release)
+    if (!current || current.minimumLauncher !== bootstrap.minimumLauncher || current.manifest.objectKey !== bootstrap.manifest.objectKey || current.manifest.bytes !== bootstrap.manifest.bytes || current.manifest.sha256.toLowerCase() !== bootstrap.manifest.sha256.toLowerCase()) {
+      fail('runtime release catalog current entry does not match bootstrap')
+    }
+    const catalogIdentity = await digestFile(catalogPath)
+    if (catalogIdentity.bytes !== bootstrap.catalog.bytes || catalogIdentity.sha256 !== bootstrap.catalog.sha256.toLowerCase()) {
+      fail('runtime release catalog bytes or SHA-256 do not match bootstrap')
+    }
+    catalog = { key: bootstrap.catalog.objectKey, path: catalogPath, identity: catalogIdentity, contentType: 'application/json' }
+  }
+
   return {
     bootstrap: { key: BOOTSTRAP_KEY, path: bootstrapPath, identity: bootstrapIdentity, contentType: 'application/json' },
     manifest: { key: bootstrap.manifest.objectKey, path: manifestPath, identity: manifestIdentity, contentType: 'application/json' },
     archive: { key: component.asset.objectKey, path: resolveOutputFile(outputDir, component.asset.objectKey), identity: archiveIdentity, contentType: 'application/zip' },
+    catalog,
   }
 }
 
@@ -245,7 +279,7 @@ export async function publish(outputDir, environment = process.env) {
   const credentialsValue = credentials(environment)
   const previousBootstrap = await readPublicBytes(BOOTSTRAP_KEY, true)
 
-  for (const asset of [publication.archive, publication.manifest]) {
+  for (const asset of [publication.archive, publication.manifest, publication.catalog].filter(Boolean)) {
     await putFile(asset, credentialsValue, true)
     await verifyPublicFile(asset)
   }
@@ -264,6 +298,7 @@ export async function publish(outputDir, environment = process.env) {
   return {
     archive: { key: publication.archive.key, ...publication.archive.identity },
     manifest: { key: publication.manifest.key, ...publication.manifest.identity },
+    ...(publication.catalog ? { catalog: { key: publication.catalog.key, ...publication.catalog.identity } } : {}),
     bootstrap: { key: publication.bootstrap.key, ...publication.bootstrap.identity },
   }
 }

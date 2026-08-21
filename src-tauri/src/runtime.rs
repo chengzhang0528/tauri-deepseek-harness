@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -5,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -16,7 +17,8 @@ use zip::ZipArchive;
 
 use crate::bootstrap::{fetch_bootstrap, load_seed_or_remote, release_origin, write_seed_copy};
 use crate::manifest::{
-    AssetRef, ReleaseManifest, RuntimeComponent, compare_versions, is_safe_relative_path,
+    AssetRef, Bootstrap, ReleaseCatalog, ReleaseManifest, RuntimeComponent, compare_versions,
+    is_safe_relative_path,
 };
 use crate::paths::AppPaths;
 
@@ -24,6 +26,8 @@ pub const MAX_ARTIFACT_BYTES: u64 = 768 * 1024 * 1024;
 pub const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 pub const MAX_EXTRACTED_FILE_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_EXTRACTED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_CATALOG_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_CATALOG_RELEASES: usize = 4096;
 const BRIDGE_PATCH_FILE: &str = "desktop-bridge.patch.yml";
 const BRIDGE_SCRIPT_FILE: &str = "desktop-bridge.mjs";
 pub const LAUNCHER_VERSION: &str = env!("DSH_LAUNCHER_VERSION");
@@ -67,6 +71,13 @@ pub struct RuntimeManager {
     client: Client,
 }
 
+#[derive(Debug, Clone)]
+struct RuntimeCandidate {
+    release: String,
+    minimum_launcher: String,
+    manifest: AssetRef,
+}
+
 impl RuntimeManager {
     pub fn new(paths: AppPaths) -> Result<Self> {
         let client = Client::builder()
@@ -76,30 +87,123 @@ impl RuntimeManager {
         Ok(Self { paths, client })
     }
 
+    fn load_candidates(
+        &self,
+        origin: &Url,
+        bootstrap: &Bootstrap,
+    ) -> Result<Vec<RuntimeCandidate>> {
+        if let Some(catalog_asset) = &bootstrap.catalog {
+            ensure!(
+                catalog_asset.bytes <= MAX_CATALOG_BYTES,
+                "runtime catalog exceeds the client maximum size"
+            );
+            let catalog_bytes = self.download_verified(origin, catalog_asset)?;
+            let catalog: ReleaseCatalog = serde_json::from_slice(&catalog_bytes)
+                .context("runtime catalog JSON is invalid")?;
+            catalog.validate().context("runtime catalog is invalid")?;
+            ensure!(
+                catalog.releases.len() <= MAX_CATALOG_RELEASES,
+                "runtime catalog contains too many releases"
+            );
+            return Ok(catalog
+                .releases
+                .into_iter()
+                .map(|entry| RuntimeCandidate {
+                    release: entry.release,
+                    minimum_launcher: entry.minimum_launcher,
+                    manifest: entry.manifest,
+                })
+                .collect());
+        }
+
+        Ok(vec![RuntimeCandidate {
+            release: bootstrap.release.clone(),
+            minimum_launcher: bootstrap.minimum_launcher.clone(),
+            manifest: bootstrap.manifest.clone(),
+        }])
+    }
+
+    fn select_candidate(
+        &self,
+        origin: &Url,
+        bootstrap: &Bootstrap,
+        current: Option<&CurrentRelease>,
+    ) -> Result<Option<RuntimeCandidate>> {
+        Ok(choose_candidate(
+            self.load_candidates(origin, bootstrap)?,
+            current,
+        ))
+    }
+}
+
+fn choose_candidate(
+    mut candidates: Vec<RuntimeCandidate>,
+    current: Option<&CurrentRelease>,
+) -> Option<RuntimeCandidate> {
+    candidates.retain(|candidate| {
+        compare_versions(&candidate.minimum_launcher, LAUNCHER_VERSION)
+            .is_ok_and(|ordering| !ordering.is_gt())
+    });
+    candidates.retain(|candidate| {
+        current.is_none_or(|current| {
+            compare_versions(&candidate.release, &current.release)
+                .is_ok_and(|ordering| !ordering.is_lt())
+        })
+    });
+    candidates.sort_by(|left, right| {
+        compare_versions(&left.release, &right.release).unwrap_or(Ordering::Equal)
+    });
+
+    let candidate = candidates.pop()?;
+    if current.is_some_and(|current| {
+        current.release == candidate.release
+            && current
+                .manifest_sha256
+                .eq_ignore_ascii_case(&candidate.manifest.sha256)
+    }) {
+        return None;
+    }
+    Some(candidate)
+}
+
+impl RuntimeManager {
+    #[allow(clippy::too_many_lines)]
     pub fn prepare_current(&self) -> Result<PreparedRuntime> {
         self.paths.create()?;
         write_seed_copy(&self.paths.launcher.join("bootstrap.windows-x64.seed.json"))?;
         let origin = release_origin()?;
         let current = self.read_current()?;
-        let remote = (|| -> Result<(crate::manifest::Bootstrap, ReleaseManifest)> {
+        let remote = (|| -> Result<Option<(RuntimeCandidate, ReleaseManifest)>> {
             let bootstrap = if current.is_some() {
                 fetch_bootstrap(&self.client, &origin)?
             } else {
                 load_seed_or_remote(&self.client, &origin)?
             };
-            ensure_launcher_compatible(&bootstrap.minimum_launcher)?;
-            let manifest_bytes = self.download_verified(&origin, &bootstrap.manifest)?;
+            let Some(candidate) = self.select_candidate(&origin, &bootstrap, current.as_ref())?
+            else {
+                return Ok(None);
+            };
+            ensure_launcher_compatible(&candidate.minimum_launcher)?;
+            let manifest_bytes = self.download_verified(&origin, &candidate.manifest)?;
             let manifest: ReleaseManifest = serde_json::from_slice(&manifest_bytes)
                 .context("runtime manifest JSON is invalid")?;
             manifest.validate().context("runtime manifest is invalid")?;
             ensure_launcher_compatible(&manifest.minimum_launcher)?;
-            if manifest.release != bootstrap.release {
-                bail!("bootstrap release does not match runtime manifest release");
+            if manifest.release != candidate.release
+                || manifest.minimum_launcher != candidate.minimum_launcher
+            {
+                bail!("runtime catalog candidate does not match its manifest");
             }
-            Ok((bootstrap, manifest))
+            Ok(Some((candidate, manifest)))
         })();
-        let (bootstrap, manifest) = match remote {
-            Ok(remote) => remote,
+        let (candidate, manifest) = match remote {
+            Ok(Some(remote)) => remote,
+            Ok(None) => {
+                if let Some(prepared) = self.prepare_existing_current(current.as_ref()) {
+                    return Ok(prepared);
+                }
+                return Err(anyhow!("no compatible runtime candidate is available"));
+            }
             Err(remote_error) => {
                 if let Some(prepared) = self.prepare_existing_current(current.as_ref()) {
                     return Ok(prepared);
@@ -114,7 +218,7 @@ impl RuntimeManager {
             release.release == manifest.release
                 && release
                     .manifest_sha256
-                    .eq_ignore_ascii_case(&bootstrap.manifest.sha256)
+                    .eq_ignore_ascii_case(&candidate.manifest.sha256)
         });
         if pointer_matches && target_root.is_dir() {
             if bridge_files_match(&target_root)
@@ -164,7 +268,7 @@ impl RuntimeManager {
         }
         let pointer = CurrentRelease {
             release: manifest.release.clone(),
-            manifest_sha256: bootstrap.manifest.sha256,
+            manifest_sha256: candidate.manifest.sha256,
             manifest_snapshot_sha256: Some(manifest_snapshot_sha256(&manifest)?),
             manifest: Some(manifest),
         };
@@ -197,20 +301,10 @@ impl RuntimeManager {
     pub fn check_for_update(&self) -> Result<Option<String>> {
         let origin = release_origin()?;
         let bootstrap = fetch_bootstrap(&self.client, &origin)?;
-        ensure_launcher_compatible(&bootstrap.minimum_launcher)?;
         let current = self.read_current()?;
-        ensure_no_downgrade(current.as_ref(), &bootstrap.release)?;
-        Ok(match current {
-            Some(current)
-                if current.release == bootstrap.release
-                    && current
-                        .manifest_sha256
-                        .eq_ignore_ascii_case(&bootstrap.manifest.sha256) =>
-            {
-                None
-            }
-            _ => Some(bootstrap.release),
-        })
+        Ok(self
+            .select_candidate(&origin, &bootstrap, current.as_ref())?
+            .map(|candidate| candidate.release))
     }
 
     /// Download, verify, unpack, and doctor a compatible runtime without changing current.
@@ -219,23 +313,27 @@ impl RuntimeManager {
         let origin = release_origin()?;
         let current = self.read_current()?;
         let bootstrap = fetch_bootstrap(&self.client, &origin)?;
-        ensure_launcher_compatible(&bootstrap.minimum_launcher)?;
-        ensure_no_downgrade(current.as_ref(), &bootstrap.release)?;
+        let Some(candidate) = self.select_candidate(&origin, &bootstrap, current.as_ref())? else {
+            let _ = fs::remove_file(self.paths.staged_pointer());
+            return Ok(None);
+        };
 
-        let manifest_bytes = self.download_verified(&origin, &bootstrap.manifest)?;
+        let manifest_bytes = self.download_verified(&origin, &candidate.manifest)?;
         let manifest: ReleaseManifest =
             serde_json::from_slice(&manifest_bytes).context("runtime manifest JSON is invalid")?;
         manifest.validate().context("runtime manifest is invalid")?;
         ensure_launcher_compatible(&manifest.minimum_launcher)?;
-        if manifest.release != bootstrap.release {
-            bail!("bootstrap release does not match runtime manifest release");
+        if manifest.release != candidate.release
+            || manifest.minimum_launcher != candidate.minimum_launcher
+        {
+            bail!("runtime catalog candidate does not match its manifest");
         }
 
         if current.as_ref().is_some_and(|current| {
             current.release == manifest.release
                 && current
                     .manifest_sha256
-                    .eq_ignore_ascii_case(&bootstrap.manifest.sha256)
+                    .eq_ignore_ascii_case(&candidate.manifest.sha256)
         }) {
             let _ = fs::remove_file(self.paths.staged_pointer());
             return Ok(None);
@@ -246,7 +344,7 @@ impl RuntimeManager {
             if staged.release == manifest.release
                 && staged
                     .manifest_sha256
-                    .eq_ignore_ascii_case(&bootstrap.manifest.sha256)
+                    .eq_ignore_ascii_case(&candidate.manifest.sha256)
                 && staged
                     .manifest_snapshot_sha256
                     .eq_ignore_ascii_case(&snapshot)
@@ -307,7 +405,7 @@ impl RuntimeManager {
 
         let staged = StagedRelease {
             release: manifest.release.clone(),
-            manifest_sha256: bootstrap.manifest.sha256,
+            manifest_sha256: candidate.manifest.sha256,
             manifest,
             manifest_snapshot_sha256: snapshot,
         };
@@ -991,6 +1089,44 @@ mod tests {
                 licenses: Vec::new(),
             }],
         }
+    }
+
+    fn candidate(release: &str, minimum_launcher: &str, digest: char) -> RuntimeCandidate {
+        RuntimeCandidate {
+            release: release.into(),
+            minimum_launcher: minimum_launcher.into(),
+            manifest: AssetRef {
+                object_key: format!("releases/{release}/windows-x64/manifest.json"),
+                bytes: 1,
+                sha256: digest.to_string().repeat(64),
+            },
+        }
+    }
+
+    #[test]
+    fn candidate_selection_chooses_highest_compatible_release() {
+        let selected = choose_candidate(
+            vec![
+                candidate("1.1.0", "0.1.1", 'a'),
+                candidate("1.3.0", "0.1.2", 'b'),
+                candidate("1.2.0", "0.1.1", 'c'),
+            ],
+            None,
+        )
+        .expect("compatible candidate");
+        assert_eq!(selected.release, "1.2.0");
+    }
+
+    #[test]
+    fn candidate_selection_does_not_downgrade_or_repeat_same_digest() {
+        let current = CurrentRelease {
+            release: "1.2.0".into(),
+            manifest_sha256: "c".repeat(64),
+            manifest: None,
+            manifest_snapshot_sha256: None,
+        };
+        assert!(choose_candidate(vec![candidate("1.1.0", "0.1.1", 'a')], Some(&current)).is_none());
+        assert!(choose_candidate(vec![candidate("1.2.0", "0.1.1", 'c')], Some(&current)).is_none());
     }
 
     #[test]

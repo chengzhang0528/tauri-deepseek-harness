@@ -26,6 +26,26 @@ pub struct Bootstrap {
     pub release: String,
     pub minimum_launcher: String,
     pub manifest: AssetRef,
+    #[serde(default)]
+    pub catalog: Option<AssetRef>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogRelease {
+    pub release: String,
+    pub minimum_launcher: String,
+    pub manifest: AssetRef,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseCatalog {
+    pub schema: u32,
+    pub product: String,
+    pub platform: String,
+    pub arch: String,
+    pub releases: Vec<CatalogRelease>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -94,7 +114,11 @@ impl Bootstrap {
         }
         validate_target(&self.product, &self.platform, &self.arch)?;
         validate_release(&self.release)?;
-        validate_asset(&self.manifest, "manifest")
+        validate_asset(&self.manifest, "manifest")?;
+        if let Some(catalog) = &self.catalog {
+            validate_asset(catalog, "catalog")?;
+        }
+        Ok(())
     }
 
     pub fn is_placeholder(&self) -> bool {
@@ -104,6 +128,29 @@ impl Bootstrap {
                 .sha256
                 .chars()
                 .all(|character| character == '0')
+    }
+}
+
+impl ReleaseCatalog {
+    pub fn validate(&self) -> Result<(), ManifestError> {
+        if self.schema != 1 {
+            return Err(ManifestError::UnsupportedManifestSchema(self.schema));
+        }
+        validate_target(&self.product, &self.platform, &self.arch)?;
+        if self.releases.is_empty() {
+            return Err(ManifestError::EmptyComponents);
+        }
+
+        let mut release_ids = std::collections::BTreeSet::new();
+        for entry in &self.releases {
+            validate_release(&entry.release)?;
+            validate_release(&entry.minimum_launcher)?;
+            validate_asset(&entry.manifest, "catalog manifest")?;
+            if !release_ids.insert(&entry.release) {
+                return Err(ManifestError::DuplicateComponent(entry.release.clone()));
+            }
+        }
+        Ok(())
     }
 }
 
