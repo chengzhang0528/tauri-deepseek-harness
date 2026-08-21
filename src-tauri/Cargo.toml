@@ -1,6 +1,6 @@
 [package]
 name = "dsh-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Native Windows host for DeepSeek Harness"
 authors = ["DSH Desktop contributors"]
 edition = "2024"

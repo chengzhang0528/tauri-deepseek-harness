@@ -27,21 +27,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate tag version
+      - name: Resolve tag version
         shell: pwsh
         run: |
-          $version = (Get-Content version.json -Raw | ConvertFrom-Json).launcherVersion
-          if ($env:GITHUB_REF_NAME -ne "v$version") {
-            throw "Tag $env:GITHUB_REF_NAME does not match launcher version v$version"
+          if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$') {
+            throw "Tag $env:GITHUB_REF_NAME must use vX.Y.Z"
           }
-          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          "RELEASE_VERSION=$($Matches.version)" >> $env:GITHUB_ENV
 
       - name: Install Rust GNU toolchain
         shell: pwsh
         run: rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
 
       - name: Build MSI
-        run: npm run build:msi
+        run: npm run release:tag -- --tag "$env:GITHUB_REF_NAME"
 
       - name: Build verified runtime closure
         shell: pwsh
@@ -51,7 +50,7 @@ jobs:
           $runtimeOutput = Join-Path $env:RUNNER_TEMP "dsh-runtime-output-$env:RELEASE_VERSION"
           npm run prepare:runtime -- --runtime-root $runtimeRoot --work-dir $runtimeWork
           if ($LASTEXITCODE -ne 0) { throw "Runtime closure preparation failed" }
-          node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release $env:RELEASE_VERSION --output-dir $runtimeOutput
+          node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release $env:RELEASE_VERSION --launcher-version $env:RELEASE_VERSION --output-dir $runtimeOutput
           if ($LASTEXITCODE -ne 0) { throw "Runtime closure verification and archive build failed" }
           "RUNTIME_OUTPUT=$runtimeOutput" >> $env:GITHUB_ENV
 

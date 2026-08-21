@@ -20,7 +20,17 @@
 npm run build:msi
 ```
 
-成功标志是生成 `src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi\DSH Desktop_0.1.0_x64_en-US.msi`。脚本会准备 WiX 3.14.1，构建前不需要手动安装 WiX。
+成功标志是生成 `src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi\DSH Desktop_0.1.1_x64_en-US.msi`。脚本会准备 WiX 3.14.1，构建前不需要手动安装 WiX。
+
+## 按版本 Tag 构建
+
+在 GitHub 网页将 `main` 的已验证提交创建为 `v0.1.1` 后，发布工作流会调用 `release:tag`，并生成相同版本的 MSI、Launcher 和 runtime manifest，不需要修改版本源码。需要在本机复现该构建时运行：
+
+```powershell
+npm run release:tag -- --tag v0.1.1
+```
+
+成功标志仍是生成 `DSH Desktop_0.1.1_x64_en-US.msi`；Tag 必须为 `vX.Y.Z` 格式。
 
 修改 Rust 后运行白盒检查：
 
@@ -37,8 +47,8 @@ npm run test:bridge
 runtime 闭包必须已经包含固定 Node、dsh、ripgrep、desktop bridge 和所有目标机器需要的原生模块；用户机器不执行 `npm install`。先将闭包放在当前用户临时目录，再运行 doctor：
 
 ```powershell
-$runtimeRoot = Join-Path $env:TEMP 'dsh-runtime-0.1.0'
-$runtimeWork = Join-Path $env:TEMP 'dsh-runtime-0.1.0-work'
+$runtimeRoot = Join-Path $env:TEMP 'dsh-runtime-0.1.1'
+$runtimeWork = Join-Path $env:TEMP 'dsh-runtime-0.1.1-work'
 $runtimeOutput = Join-Path $env:TEMP 'dsh-runtime-build'
 npm run prepare:runtime -- --runtime-root $runtimeRoot --work-dir $runtimeWork
 node scripts/doctor-runtime.mjs --root $runtimeRoot
@@ -47,7 +57,7 @@ node scripts/doctor-runtime.mjs --root $runtimeRoot
 doctor 必须同时通过 `node --version`、`rg --version`、`dsh --version`、随机端口 `dsh web --port 0 --no-open`、Harness bootstrap 身份检查和 bridge drain。通过后生成本地 manifest、bootstrap 和 ZIP：
 
 ```powershell
-node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release 0.1.0 --output-dir $runtimeOutput
+node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release 0.1.1 --output-dir $runtimeOutput
 ```
 
 构建机无法连接上游 ripgrep 下载地址时，先从固定上游取得 `ripgrep-15.2.0-x86_64-pc-windows-msvc.zip`，再将本地路径传给 `--ripgrep-zip`。脚本仍会校验 `runtime-versions.windows-x64.json` 中的 SHA-256；不匹配的文件不会进入 closure。
@@ -59,7 +69,7 @@ node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release 0.1.0 --out
 使用刚生成的 MSI 静默安装并记录日志：
 
 ```powershell
-$msi = (Resolve-Path 'src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi\DSH Desktop_0.1.0_x64_en-US.msi').Path
+$msi = (Resolve-Path 'src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi\DSH Desktop_0.1.1_x64_en-US.msi').Path
 $log = Join-Path $env:TEMP 'dsh-desktop-install.log'
 Start-Process -FilePath "$env:WINDIR\System32\msiexec.exe" -ArgumentList "/i `"$msi`" /qn /norestart /l*v `"$log`"" -Wait
 ```
