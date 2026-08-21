@@ -26,6 +26,7 @@ Depends On:
 - `WORKSPACE_STRUCTURE.md` -> `StructureContract`
 - `工作流/` -> `WorkflowContract,Workflow`
 - `工作空间/归档/` -> `Archive`
+- `工作空间/推进中/` -> `ChangePlan,SystemTestPlan,DeploymentPlan,Issue`
 - `项目/项目_atlas_dsh_desktop/AGENTS.md` -> `AgentEntry`
 - `项目/项目_atlas_dsh_desktop/ProductContract.md` -> `ProductContract`
 - `项目/项目_atlas_dsh_desktop/CurrentDesign.md` -> `CurrentDesign`

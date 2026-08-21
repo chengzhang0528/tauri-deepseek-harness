@@ -12,6 +12,7 @@ jobs:
   windows-msi:
     name: Build Windows MSI
     runs-on: windows-latest
+    environment: oss-release
 
     steps:
       - name: Check out tagged source
@@ -41,6 +42,24 @@ jobs:
 
       - name: Build MSI
         run: npm run build:msi
+
+      - name: Build verified runtime closure
+        shell: pwsh
+        run: |
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP "dsh-runtime-$env:RELEASE_VERSION"
+          $runtimeWork = Join-Path $env:RUNNER_TEMP "dsh-runtime-work-$env:RELEASE_VERSION"
+          $runtimeOutput = Join-Path $env:RUNNER_TEMP "dsh-runtime-output-$env:RELEASE_VERSION"
+          npm run prepare:runtime -- --runtime-root $runtimeRoot --work-dir $runtimeWork
+          if ($LASTEXITCODE -ne 0) { throw "Runtime closure preparation failed" }
+          node scripts/build-runtime.mjs --runtime-root $runtimeRoot --release $env:RELEASE_VERSION --output-dir $runtimeOutput
+          if ($LASTEXITCODE -ne 0) { throw "Runtime closure verification and archive build failed" }
+          "RUNTIME_OUTPUT=$runtimeOutput" >> $env:GITHUB_ENV
+
+      - name: Publish verified runtime to OSS
+        env:
+          ALIYUN_OSS_ACCESS_KEY_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+          ALIYUN_OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
+        run: npm run publish:runtime -- --output-dir "$env:RUNTIME_OUTPUT"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
