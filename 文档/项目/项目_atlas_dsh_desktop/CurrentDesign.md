@@ -4,7 +4,7 @@ Status: Active
 Kind: CurrentDesign
 Scope: atlas-dsh-desktop / Windows x64 桌面壳与私有运行时
 Owner: 项目维护者
-Updated: 2026-08-20
+Updated: 2026-08-21
 Depends On:
 - ProductContract.md
 
@@ -19,7 +19,7 @@ Depends On:
 | 服务启动 | 上游支持随机端口和 `--no-open` | 解析 readiness，验证 Harness bootstrap 后才创建外部 URL WebView | 完整 dsh 工作台，无桌面端页面 | Process Supervisor | 无业务持久化变化 | 上游 `dsh web --port 0 --no-open` | 无 |
 | 退出与托盘 | 参考实现只会 `taskkill /T /F` | Job Object、桌面桥、活动任务 drain、原生确认和明确强退 | 托盘与原生 TaskDialog | Native Host + Bridge | 只保存客户端偏好 | Windows 不能可靠向隐藏进程投递上游依赖的 `SIGTERM` | 无 |
 | 更新与恢复 | 当前无客户端更新实现 | manifest 下载、校验、doctor、暂存、确认激活和 forward repair | 原生托盘命令、TaskDialog 与系统通知 | Launcher + Native Host | 新增 current/staged 指针；用户数据不迁入 | 上游 developer preview 不保证数据向后兼容 | 无 |
-| 分发 | 当前无本项目制品 | 当前用户 MSI 和 `atlas-dsh-desktop/` OSS 闭包 | Setup、修复、卸载 | Installer + Release tooling | 安装注册与用户数据分离 | 已批准薄安装器、自用分发和唯一前缀 | 无 |
+| 分发 | 当前无本项目制品 | Tag 触发 GitHub Actions 构建并发布当前用户 MSI 到同名 GitHub Release；`atlas-dsh-desktop/` OSS 闭包继续独立交付 | Setup、修复、卸载 | Installer + Release tooling | 安装注册与用户数据分离 | 已批准薄安装器、自用分发、GitHub Release 下载和唯一 OSS 前缀 | 无 |
 
 ## 目标架构
 
@@ -140,9 +140,9 @@ Launcher 启动时以及 Native Host 运行期间约每六小时检查一次。�
 3. 构建固定 Windows x64 runtime 闭包和 desktop bridge，冻结 Node ABI 与原生模块；禁止用户机器 npm 安装。
 4. 实现随机端口启动、Harness 身份确认、隐藏进程、Job Object、健康监控和有界重启；只有 ready 后才动态创建直接加载 dsh URL 的 WebView。
 5. 实现原生托盘、TaskDialog、活动任务 drain、显式退出与强退边界，再接入更新暂存和确认激活；不向 dsh 页面添加桌面端交互。
-6. 使用 Tauri 官方 WiX/MSI 构建链和项目级 WiX 模板生成当前用户薄安装器，加入 seed Bootstrap、WebView2 探测、许可证、修复和卸载边界；只产出本地 Development 候选，不发布。生成 MSI 若注册为 per-machine 或要求提升权限，立即阻断打包，不并行增加第二套安装器。
+6. 使用 Tauri 官方 WiX/MSI 构建链和项目级 WiX 模板生成当前用户薄安装器，加入 seed Bootstrap、WebView2 探测、许可证、修复和卸载边界；匹配版本 Tag 时由 GitHub Actions 构建并将 MSI 上传同名 GitHub Release，runtime manifest/ZIP 仍按 OSS 前缀独立交付。生成 MSI 若注册为 per-machine 或要求提升权限，立即阻断打包，不并行增加第二套安装器。
 
-不得照搬参考项目的系统 Node 复用、Node 最新版解析、`@latest`、固定 3080、TCP-only ready、`taskkill /T /F` 日常退出、完整 stdout 日志或 GitHub 二进制发布。
+不得照搬参考项目的系统 Node 复用、Node 最新版解析、`@latest`、固定 3080、TCP-only ready、`taskkill /T /F` 日常退出、完整 stdout 日志或将 runtime payload 发布到 GitHub Release 作为运行期下载源。
 
 ## 编码约束与停止条件
 

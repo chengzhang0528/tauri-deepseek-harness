@@ -521,7 +521,7 @@ for (const file of files.filter((item) => {
     || label.startsWith(".agents/skills/");
 })) {
   const text = texts.get(file);
-  if (/[A-Za-z]:[\\/][^\s`]+/.test(text)) {
+  if (/\b[A-Za-z]:[\\/][^\s`]+/.test(text)) {
     errors.push(`${relative(file)}: contains a machine-specific workspace path`);
   }
   if (/Password=(?!<|\$\{|%|\$env:|__)[^;\s"'`]+/i.test(text)) {

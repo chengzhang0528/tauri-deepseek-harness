@@ -4,7 +4,7 @@ Status: Active
 Kind: ProductContract
 Scope: atlas-dsh-desktop / 首版桌面交付
 Owner: 项目维护者
-Updated: 2026-08-20
+Updated: 2026-08-21
 Depends On:
 - AGENTS.md
 
@@ -28,14 +28,14 @@ WebView 中唯一允许呈现的 Web 内容是当前受管 runtime 执行 `dsh w
 | 平台 | Windows 10/11 x64 |
 | 桌面框架 | Tauri 2，复用上游 Harness Web UI |
 | 安装形态 | 当前用户级薄安装器；首次启动允许联网准备私有运行时 |
-| 分发模式 | `self-use`；应用自有二进制可不做发布者签名，但必须绑定源码提交、对象键、大小、SHA-256 与 doctor 结果 |
-| 应用自有二进制来源 | scheme `https`, host `shared-public-assets.oss-cn-beijing.aliyuncs.com`, prefix `atlas-dsh-desktop/` |
+| 分发模式 | `self-use`；Windows x64 MSI 通过匹配版本 Tag 的 GitHub Release 提供下载，runtime 闭包仍通过 OSS 交付；应用自有二进制可不做发布者签名，但必须绑定源码提交、版本、大小、SHA-256 与 doctor 结果 |
+| 应用自有二进制来源 | Installer/Launcher MSI：GitHub Release；runtime manifest 与 payload：scheme `https`, host `shared-public-assets.oss-cn-beijing.aliyuncs.com`, prefix `atlas-dsh-desktop/` |
 | 模型 | 不内置本地模型；模型与 API Key 仍由 Harness 的用户配置入口管理 |
 | 窗口关闭 | 有活动任务时隐藏到托盘；无活动任务时可正常退出；托盘“退出”执行受控 drain |
 
 首版不要求系统 Node、全局 PATH、Git、编译器或用户机器上的原生模块构建环境。系统 Git、外部 MCP 程序和其他第三方工具只有在 Harness 对具体能力明确要求时才作为可诊断的外部前置，不冒充内置运行时。
 
-Windows WebView2 是由 Microsoft 服务的系统前置，不属于应用私有 runtime；Installer 必须先探测并通过 Tauri 官方安装模式补足缺失版本，随后重新探测。应用自有 Installer、Launcher、helper、manifest 与 runtime payload 仍只从上述 OSS 前缀交付。
+Windows WebView2 是由 Microsoft 服务的系统前置，不属于应用私有 runtime；Installer 必须先探测并通过 Tauri 官方安装模式补足缺失版本，随后重新探测。Installer/Launcher MSI 从对应 GitHub Release 获取，manifest 与 runtime payload 仍只从上述 OSS 前缀交付。
 
 ## 用户可见行为
 
