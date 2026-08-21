@@ -1,0 +1,14 @@
+{
+  "name": "atlas-dsh-desktop-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Build-time dependency closure for DSH Desktop Windows x64 runtime",
+  "engines": {
+    "node": "24.19.0"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis-plugin-group": "1.0.1",
+    "@deepseek-ai/dsh": "0.1.0-rc.8",
+    "pnpm": "10.15.0"
+  }
+}
