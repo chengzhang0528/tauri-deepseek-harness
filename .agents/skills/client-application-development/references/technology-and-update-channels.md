@@ -67,6 +67,20 @@ Do not add a custom release-asset downloader when the official package manager, 
 
 Keep application, installer/launcher, and managed capability versions separate when they release independently. Each has one canonical version owner and compatibility relation; a normal capability update must not rewrite the installer or application version unless their owned behavior or compatibility contract changes.
 
+## Resolve Multi-Source Runtime Candidates
+
+When a ProductContract enables multiple runtime providers, inspect each configured provider without treating any one `latest` value as authoritative:
+
+| Provider | Discovery | Acquisition | Required admission |
+|---|---|---|---|
+| Local | Installed/current and verified cache inventory | Reuse or copy into staging | Ownership, platform, digest, closure and doctor checks |
+| OSS | Exact immutable manifest/catalog objects | Download the declared payload | Public read-back identity, provenance and manifest compatibility |
+| npm/registry | Official metadata and resolved package version | Use the official package-manager path or a declared local package input | Pinned version, complete managed closure, native-module/bridge/doctor checks |
+
+Normalize provider results into one candidate model, then filter launcher compatibility, platform/architecture, current-version non-downgrade, integrity, and health before semantic version comparison. `auto` selects the highest compatible candidate among explicitly enabled providers; fixed-source and fixed-version settings select only the requested source/version. A provider failure is diagnosable. Trying another provider is permitted only when that provider is explicitly enabled by the contract or settings, never as an undeclared fallback.
+
+Discovery and acquisition are separate: seeing `@deepseek-ai/dsh@0.1.1-rc.2` in npm metadata does not make it an installable desktop runtime. The selected npm candidate must still produce the complete closure owned by the client. If the project contract selects a single OSS origin, retain that policy and do not widen it through this generic method.
+
 ## Design The User Interaction
 
 Default to a deliberate two-step interaction:
@@ -105,4 +119,4 @@ For launcher-managed desktop clients, check at Launcher startup and about every 
 - Active work and user data survive failure, defer, restart, and the selected recovery behavior.
 - Installed version after success matches the official registry/feed/store and the UI's reported version.
 - Installer, manifest, payload, and fallback objects are anonymously readable from their exact OSS keys; GitHub has no release binary assets.
-- An OSS outage produces a diagnosable source failure without fallback and leaves the current version and user data intact.
+- A configured provider outage produces a diagnosable source failure; `auto` may continue with another explicitly enabled provider, but never an undeclared origin, and current version/user data remain intact.

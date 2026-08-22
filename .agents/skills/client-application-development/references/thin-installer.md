@@ -42,8 +42,8 @@ root: <project-prefix>/
 
 Each release contains one manifest plus one payload per independently managed component. Do not add another mutable latest pointer or duplicate a payload under multiple permanent keys. GitHub may hold source, tags, release notes, and optional automation, but no release binaries.
 
-### Single-origin OSS closure
-Give every immutable artifact one identity (`objectKey`, size, SHA-256, signature/provenance) under the project prefix. The Launcher performs exact reads from this closure and never discovers objects through List, filename guesses, mutable latest endpoints, GitHub, registries, or runtime fallback URLs.
+### Configured source closure
+For a single-source contract, give every immutable artifact one identity (`objectKey`, size, SHA-256, signature/provenance) under the project prefix. The Launcher performs exact reads from that closure and never discovers objects through List, filename guesses, mutable latest endpoints, GitHub, registries, or runtime fallback URLs. For a multi-source runtime contract, apply the same identity and admission rules per provider and normalize the resulting candidates before selection; do not add an undeclared source.
 
 Treat the fixed OSS endpoint as deployment configuration, not application transport-security policy. Do not add custom host, scheme, certificate, Origin/Host, redirect, or source-allowlist enforcement. Apply size, digest, signature/provenance, cancellation, and safe-path checks to the downloaded artifact.
 
@@ -92,7 +92,7 @@ Do not resolve assets by filename guesses, latest directory entries, or a mutabl
    - Otherwise treat the older Launcher protocol, schema, and private installer state as unsupported. Do not download, stage, execute, or activate an incompatible Installer from the running client. Report `setup-required`, direct the user to the newer official Setup, offer uninstall/reinstall only after normal Setup/upgrade fails, and leave the current installation and user data untouched. Repair an unreachable Setup or misplaced state at its owner; neither defect creates an implicit compatibility promise.
 4. An externally run newer Setup may install the new Launcher. Before that Launcher starts an existing Manager, compare the Manager with the Launcher's compiled minimum version; when incompatible, enter the normal setup/bootstrap flow and prepare a compatible release. This is a startup admission check, not a historical compatibility bridge.
 5. The launcher reads the selected release manifest, probes components, and reuses eligible system or private-cache candidates. A successful probe must be observable as reused/skipped and must not copy, upgrade, edit, or change global PATH for a system component.
-6. Missing or insufficient components are fetched from the configured distribution endpoint. A required component that cannot be verified or doctored must prevent `ready`.
+6. Missing or insufficient components are fetched through the provider selected by the contract and candidate policy. A required component that cannot be verified or doctored must prevent `ready`.
 
 The launcher should expose progress with the component, phase, completed/total count, and real download bytes. Probe, hash, unpack, and doctor phases may show activity without inventing a static percentage. Errors must include the component, source key, failed phase, system message, and diagnostic location.
 
@@ -173,7 +173,7 @@ Use an exact public asset, not a worktree binary:
 7. Stage an update while work is active; assert waiting-for-drain and no forced interruption.
 8. Confirm activation, post-start health, and the configured recovery mode. For automatic rollback, deliberately fail health and prove restoration; for forward repair, prove no incompatible prior release is selected and the repair state remains diagnosable.
 9. Verify startup and six-hour checks, background staging without Service/scheduled-task persistence, the single dynamic control, Windows owned-process takeover, and repair/upgrade state preservation.
-10. Make the OSS endpoint unreachable and assert a diagnosable source failure, no fallback to GitHub/registry/another origin, and no change to `current` or user data.
+10. Make each configured provider unreachable in turn and assert a diagnosable source failure; `auto` may use another explicitly enabled provider but never GitHub, an undeclared registry, or another origin, and must leave `current` and user data unchanged.
 11. Record exact environment, installed/current/staged versions, any contract-owned previous version, recovery result, process/window state, shortcuts, component source and outcome, and unsupported cases as Issues.
 
 This is evidence for a separately requested SystemTest or release acceptance; building an installer alone does not authorize publication or deployment.

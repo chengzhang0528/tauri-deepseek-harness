@@ -20,6 +20,7 @@ Every changed boundary needs one positive case and one nearby negative case:
 - A valid update stages and waits for the declared drain; active work is not forcibly interrupted.
 - A final installed executable starts; a worktree/debug-only result is not accepted as installed evidence.
 - A permitted source is read exactly; an outage produces a diagnosable failure without an undeclared fallback origin.
+- Enabled providers produce normalized candidates; a higher but incomplete, incompatible, or unhealthy candidate is not selected, while a fixed source/version setting remains authoritative.
 
 ## Managed Runtime Checks
 

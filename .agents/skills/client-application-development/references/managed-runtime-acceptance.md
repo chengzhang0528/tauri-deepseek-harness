@@ -4,7 +4,7 @@ Load this reference when a client ships or prepares a private language runtime, 
 
 ## Closure
 
-Freeze the runtime version, platform, architecture, source identity, exact files, and digest before packaging. Build the closure once from a clean output directory. The user's machine must not silently fall back to a system runtime, an unpinned registry install, or an undeclared binary origin.
+Freeze the runtime version, platform, architecture, source identity, exact files, and digest before packaging. Build the closure once from a clean output directory. The user's machine must not silently fall back to a system runtime, an unpinned registry install, or an undeclared binary origin. A registry source is permitted only when the ProductContract explicitly enables it and the resolved package input produces the same complete, pinned closure and admission evidence.
 
 Run final doctor checks against the exact staged or archived tree:
 

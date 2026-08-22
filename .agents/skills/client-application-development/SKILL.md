@@ -77,6 +77,10 @@ Choose the existing framework/package-manager/platform path before introducing a
 
 Do not read every reference by default. The fast path selects the smallest set.
 
+### Multi-source Runtime Candidates
+
+When the ProductContract enables multiple runtime sources, resolve `local`, configured `oss`, and authorized `npm`/registry inputs as one candidate set; read [technology-and-update-channels.md](references/technology-and-update-channels.md) for the provider matrix. Normalize source identity, version, platform, Launcher compatibility, exact input, integrity/provenance, and doctor evidence before semantic comparison. `auto` selects the highest compatible candidate among explicitly enabled providers; fixed `source + version` settings restrict selection. Local reuse and registry inputs require the same complete-closure checks as downloads, and a runtime update must not replace the Launcher or invent an undeclared fallback origin.
+
 ## Execution Boundaries
 
 ### Development
@@ -110,7 +114,6 @@ Stop before implementation when any of these cannot be resolved from the user, p
 - a required signature, credential, or platform prerequisite is missing for the selected production/channel contract.
 
 Missing self-use publisher credentials do not block local Development when no production admission requires them; the selected distribution owner defines the exact exception.
-
 ## Report And Close
 
 Report the task type, changed boundary, resolved owners, delivery shape, measured artifact/installed evidence, recovery result, unsupported cases, and Git state separately. Use WF-0004 for workspace-changing tasks. Do not create task state, candidates, or permanent documents merely to record this method run.
