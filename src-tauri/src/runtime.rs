@@ -385,7 +385,7 @@ impl RuntimeManager {
         Ok(candidates)
     }
 
-    fn load_npm_candidates(&self, settings: &NpmUpdateSettings) -> Result<Vec<RuntimeCandidate>> {
+    fn load_npm_packument(&self, settings: &NpmUpdateSettings) -> Result<NpmPackument> {
         let registry = Url::parse(&settings.registry).context("npm registry is not a URL")?;
         let encoded_package = settings.package.replace('/', "%2f");
         let url = registry
@@ -411,8 +411,11 @@ impl RuntimeManager {
             u64::try_from(body.len()).unwrap_or(u64::MAX) <= MAX_NPM_PACKUMENT_BYTES,
             "npm registry metadata exceeds the client maximum size"
         );
-        let packument: NpmPackument =
-            serde_json::from_slice(&body).context("npm registry metadata JSON is invalid")?;
+        serde_json::from_slice(&body).context("npm registry metadata JSON is invalid")
+    }
+
+    fn load_npm_candidates(&self, settings: &NpmUpdateSettings) -> Result<Vec<RuntimeCandidate>> {
+        let packument = self.load_npm_packument(settings)?;
         let mut candidates = Vec::new();
         for (version, entry) in packument.versions {
             if version != entry.version {
@@ -421,21 +424,19 @@ impl RuntimeManager {
             let Some(descriptor) = entry.runtime else {
                 continue;
             };
-            ensure!(
-                is_safe_relative_path(&descriptor.package_root)
-                    && Path::new(&descriptor.package_root).components().count() == 1,
-                "npm runtime package root is invalid"
-            );
-            descriptor
-                .manifest
-                .validate()
-                .context("npm runtime closure manifest is invalid")?;
-            ensure!(
-                descriptor.manifest.release == version,
-                "npm runtime closure release does not match package version"
-            );
-            let source_identity = npm_distribution_identity(&entry.dist)?;
-            let manifest = npm_manifest_asset(&descriptor.manifest)?;
+            if !is_safe_relative_path(&descriptor.package_root)
+                || Path::new(&descriptor.package_root).components().count() != 1
+                || descriptor.manifest.validate().is_err()
+                || descriptor.manifest.release != version
+            {
+                continue;
+            }
+            let Ok(source_identity) = npm_distribution_identity(&entry.dist) else {
+                continue;
+            };
+            let Ok(manifest) = npm_manifest_asset(&descriptor.manifest) else {
+                continue;
+            };
             candidates.push(RuntimeCandidate {
                 source: RuntimeSource::Npm,
                 release: version,
@@ -451,6 +452,10 @@ impl RuntimeManager {
             });
         }
         Ok(candidates)
+    }
+
+    fn load_npm_versions(&self, settings: &NpmUpdateSettings) -> Result<Vec<String>> {
+        Ok(npm_version_names(self.load_npm_packument(settings)?))
     }
 
     fn discover_candidates(
@@ -879,20 +884,44 @@ impl RuntimeManager {
             }))
     }
 
-    /// Lists every compatible runtime version visible to the current source policy.
+    /// Lists every runtime version visible to the current source policy.
     ///
     /// This is intentionally broader than `check_for_update`: the native UI needs to
-    /// let users choose a concrete source/version pair, while still hiding candidates
-    /// that cannot be activated by this Launcher or would downgrade the current runtime.
+    /// let users choose a concrete source/version pair. Complete closure and doctor
+    /// validation remains enforced when the selected version is staged.
     pub fn list_available_versions(&self) -> Result<Vec<AvailableUpdate>> {
         let current = self.read_current()?;
         let settings = self.read_settings()?;
         let candidates = self.discover_candidates(&settings, current.as_ref())?;
-        Ok(list_compatible_versions(
-            candidates,
-            current.as_ref(),
-            &settings,
-        ))
+        let mut versions = list_compatible_versions(candidates, current.as_ref(), &settings);
+        if settings.source.accepts(RuntimeSource::Npm) {
+            let npm_versions = match self.load_npm_versions(&settings.npm) {
+                Ok(versions) => versions,
+                Err(error) if settings.source.is_fixed() => return Err(error),
+                Err(_) => Vec::new(),
+            };
+            for release in npm_versions {
+                if current.as_ref().is_some_and(|current| {
+                    compare_versions(&release, &current.release).is_ok_and(Ordering::is_lt)
+                }) {
+                    continue;
+                }
+                if !versions.iter().any(|version| {
+                    version.release == release && version.source == RuntimeSource::Npm
+                }) {
+                    versions.push(AvailableUpdate {
+                        release,
+                        source: RuntimeSource::Npm,
+                    });
+                }
+            }
+            versions.sort_by(|left, right| {
+                compare_versions(&right.release, &left.release)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| right.source.rank().cmp(&left.source.rank()))
+            });
+        }
+        Ok(versions)
     }
 
     /// Download, verify, unpack, and doctor a compatible runtime without changing current.
@@ -1230,6 +1259,17 @@ fn list_compatible_versions(
             .then_with(|| right.source.rank().cmp(&left.source.rank()))
     });
     versions
+}
+
+fn npm_version_names(packument: NpmPackument) -> Vec<String> {
+    packument
+        .versions
+        .into_iter()
+        .filter_map(|(version, entry)| {
+            (version == entry.version && compare_versions(&version, "0.0.0").is_ok())
+                .then_some(version)
+        })
+        .collect()
 }
 
 fn read_json_state<T>(path: &Path, label: &str) -> Result<Option<T>>
@@ -1959,6 +1999,26 @@ mod tests {
                     source: RuntimeSource::Npm,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn npm_version_list_keeps_versions_without_runtime_descriptor() {
+        let mut versions = BTreeMap::new();
+        versions.insert(
+            "0.1.1-rc.2".into(),
+            NpmPackageVersion {
+                version: "0.1.1-rc.2".into(),
+                dist: NpmDistribution {
+                    tarball: Url::parse("https://example.invalid/dsh.tgz").expect("tarball"),
+                    integrity: None,
+                },
+                runtime: None,
+            },
+        );
+        assert_eq!(
+            npm_version_names(NpmPackument { versions }),
+            vec!["0.1.1-rc.2"]
         );
     }
 

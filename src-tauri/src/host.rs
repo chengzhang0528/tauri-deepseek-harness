@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -293,6 +293,7 @@ fn render_runtime_versions(
         }
     };
 
+    let menu_enabled = state.update.lock().map_or(true, |update| !update.busy);
     let mut items = Vec::with_capacity(versions.len());
     for (index, version) in versions.iter().enumerate() {
         let selected = selected_version.as_deref() == Some(version.release.as_str())
@@ -304,7 +305,8 @@ fn render_runtime_versions(
             source_label(version.source)
         );
         let id = format!("runtime-version-{index}");
-        let Ok(item) = MenuItem::with_id(menu.app_handle(), &id, label, true, None::<&str>) else {
+        let Ok(item) = MenuItem::with_id(menu.app_handle(), &id, label, menu_enabled, None::<&str>)
+        else {
             continue;
         };
         if let Ok(mut selections) = state.version_selections.lock() {
@@ -489,6 +491,9 @@ fn start_update_scheduler(state: HostState) {
 
 fn run_update_check(state: HostState, automatic: bool, notify_errors: bool) {
     if !begin_update_work(&state, UpdatePhase::Check) {
+        if notify_errors {
+            dialogs::info("DSH Desktop", "运行时更新正在进行，请稍后再选择版本。");
+        }
         return;
     }
     thread::spawn(move || {
@@ -503,12 +508,15 @@ fn run_update_check(state: HostState, automatic: bool, notify_errors: bool) {
                 if let Ok(mut update) = state.update.lock() {
                     update.available = Some(update_available);
                     update.phase = UpdatePhase::Stage;
-                    update.busy = false;
+                    if !automatic {
+                        update.busy = false;
+                    }
                 }
-                set_update_text(&state, "Download and stage update");
                 if automatic {
-                    stage_update(state, false);
+                    set_update_text(&state, "Downloading and staging update");
+                    stage_update_reserved(state, false);
                 } else {
+                    set_update_text(&state, "Download and stage update");
                     dialogs::info(
                         "DSH Desktop",
                         format!("发现可用运行时更新：{version}（来源：{source}）"),
@@ -545,6 +553,10 @@ fn stage_update(state: HostState, notify: bool) {
     if !begin_update_work(&state, UpdatePhase::Stage) {
         return;
     }
+    stage_update_reserved(state, notify);
+}
+
+fn stage_update_reserved(state: HostState, notify: bool) {
     thread::spawn(move || {
         let result = (|| -> Result<Option<StagedRelease>> {
             let paths = AppPaths::discover()?;
@@ -710,6 +722,26 @@ fn set_update_text(state: &HostState, text: &str) {
     {
         let _ = item.set_text(text);
         let _ = item.set_enabled(enabled);
+    }
+    set_runtime_menu_enabled(state, enabled);
+}
+
+fn set_runtime_menu_enabled(state: &HostState, enabled: bool) {
+    if let Ok(items) = state.source_items.lock() {
+        for (_, item) in items.iter() {
+            let _ = item.set_enabled(enabled);
+        }
+    }
+    let selectable_ids = state
+        .version_selections
+        .lock()
+        .map(|selections| selections.keys().cloned().collect::<HashSet<_>>())
+        .unwrap_or_default();
+    if let Ok(items) = state.version_items.lock() {
+        for item in items.iter() {
+            let selectable = selectable_ids.contains(item.id().as_ref());
+            let _ = item.set_enabled(enabled && selectable);
+        }
     }
 }
 
