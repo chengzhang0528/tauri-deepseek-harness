@@ -89,6 +89,15 @@ impl UpdateSourcePolicy {
     fn is_fixed(self) -> bool {
         !matches!(self, Self::Auto)
     }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Local => "local",
+            Self::Oss => "oss",
+            Self::Npm => "npm",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -482,11 +491,9 @@ impl RuntimeManager {
         settings: &RuntimeUpdateSettings,
         current: Option<&CurrentRelease>,
     ) -> Result<Option<RuntimeCandidate>> {
-        Ok(choose_candidate(
-            self.discover_candidates(settings, current)?,
-            current,
-            settings,
-        ))
+        let candidates = self.discover_candidates(settings, current)?;
+        validate_requested_candidate(&candidates, current, settings)?;
+        Ok(choose_candidate(candidates, current, settings))
     }
 
     fn runtime_root(&self, release: &str, source: RuntimeSource) -> PathBuf {
@@ -494,6 +501,43 @@ impl RuntimeManager {
             .runtimes
             .join(format!("{release}{}", source.directory_suffix()))
     }
+}
+
+fn validate_requested_candidate(
+    candidates: &[RuntimeCandidate],
+    current: Option<&CurrentRelease>,
+    settings: &RuntimeUpdateSettings,
+) -> Result<()> {
+    let Some(version) = settings.version.as_deref() else {
+        return Ok(());
+    };
+    let matching = candidates
+        .iter()
+        .filter(|candidate| {
+            settings.source.accepts(candidate.source) && candidate.release == version
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        !matching.is_empty(),
+        "selected runtime {version} is unavailable from source policy {}; the source may not provide a complete runtime closure",
+        settings.source.label()
+    );
+    ensure!(
+        matching.iter().any(|candidate| {
+            compare_versions(&candidate.minimum_launcher, LAUNCHER_VERSION)
+                .is_ok_and(|ordering| !ordering.is_gt())
+        }),
+        "selected runtime {version} requires a newer Launcher"
+    );
+    if let Some(current) = current
+        && compare_versions(version, &current.release).is_ok_and(std::cmp::Ordering::is_lt)
+    {
+        bail!(
+            "selected runtime {version} is older than current runtime {}",
+            current.release
+        );
+    }
+    Ok(())
 }
 
 fn choose_candidate(
@@ -1848,6 +1892,36 @@ mod tests {
         .expect("fixed candidate");
         assert_eq!(selected.release, "1.2.0");
         assert_eq!(selected.source, RuntimeSource::Oss);
+    }
+
+    #[test]
+    fn requested_version_is_not_silently_replaced_or_reported_as_current() {
+        let settings = RuntimeUpdateSettings {
+            source: UpdateSourcePolicy::Npm,
+            version: Some("1.4.0".into()),
+            ..RuntimeUpdateSettings::default()
+        };
+        let error = validate_requested_candidate(
+            &[candidate_with_source(
+                "1.4.0",
+                "0.1.0",
+                'a',
+                RuntimeSource::Oss,
+            )],
+            None,
+            &settings,
+        )
+        .expect_err("wrong source must be reported");
+        assert!(format!("{error:#}").contains("selected runtime 1.4.0 is unavailable"));
+
+        let settings = RuntimeUpdateSettings {
+            source: UpdateSourcePolicy::Auto,
+            version: Some("1.4.0".into()),
+            ..RuntimeUpdateSettings::default()
+        };
+        let error = validate_requested_candidate(&[], None, &settings)
+            .expect_err("missing closure must be reported");
+        assert!(format!("{error:#}").contains("complete runtime closure"));
     }
 
     #[test]
