@@ -79,7 +79,7 @@ Do not read every reference by default. The fast path selects the smallest set.
 
 ### Multi-source Runtime Candidates
 
-When the ProductContract enables multiple runtime sources, resolve `local`, configured `oss`, and authorized `npm`/registry inputs as one candidate set; read [technology-and-update-channels.md](references/technology-and-update-channels.md) for the provider matrix. Normalize source identity, version, platform, Launcher compatibility, exact input, integrity/provenance, and doctor evidence before semantic comparison. `auto` selects the highest compatible candidate among explicitly enabled providers; fixed `source + version` settings restrict selection. Local reuse and registry inputs require the same complete-closure checks as downloads, and a runtime update must not replace the Launcher or invent an undeclared fallback origin.
+For a replaceable managed runtime, default to multi-source resolution across available `local`, configured `oss`, and authorized `npm`/registry inputs; a ProductContract may explicitly narrow this to one source. Read [technology-and-update-channels.md](references/technology-and-update-channels.md) for the provider matrix. Normalize source identity, version, platform, Launcher compatibility, exact input, integrity/provenance, and doctor evidence before semantic comparison. `auto` selects the highest compatible candidate among enabled providers; fixed `source + version` settings restrict selection. Local reuse and registry inputs require the same complete-closure checks as downloads, and a runtime update must not replace the Launcher or invent an undeclared fallback origin.
 
 ## Execution Boundaries
 

@@ -43,7 +43,7 @@ root: <project-prefix>/
 Each release contains one manifest plus one payload per independently managed component. Do not add another mutable latest pointer or duplicate a payload under multiple permanent keys. GitHub may hold source, tags, release notes, and optional automation, but no release binaries.
 
 ### Configured source closure
-For a single-source contract, give every immutable artifact one identity (`objectKey`, size, SHA-256, signature/provenance) under the project prefix. The Launcher performs exact reads from that closure and never discovers objects through List, filename guesses, mutable latest endpoints, GitHub, registries, or runtime fallback URLs. For a multi-source runtime contract, apply the same identity and admission rules per provider and normalize the resulting candidates before selection; do not add an undeclared source.
+For a replaceable managed runtime, default to multiple configured providers; use a single-source closure only when the ProductContract explicitly narrows it. Give every immutable artifact one identity (`objectKey`, size, SHA-256, signature/provenance) under its provider's declared source. The Launcher performs exact reads and never discovers objects through List, filename guesses, mutable latest endpoints, GitHub, registries, or runtime fallback URLs. Apply the same identity and admission rules per provider and normalize candidates before selection; do not add an undeclared source.
 
 Treat the fixed OSS endpoint as deployment configuration, not application transport-security policy. Do not add custom host, scheme, certificate, Origin/Host, redirect, or source-allowlist enforcement. Apply size, digest, signature/provenance, cancellation, and safe-path checks to the downloaded artifact.
 

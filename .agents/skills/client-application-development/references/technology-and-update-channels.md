@@ -69,7 +69,7 @@ Keep application, installer/launcher, and managed capability versions separate w
 
 ## Resolve Multi-Source Runtime Candidates
 
-When a ProductContract enables multiple runtime providers, inspect each configured provider without treating any one `latest` value as authoritative:
+For a replaceable managed runtime, inspect multiple configured providers by default without treating any one `latest` value as authoritative. A ProductContract may explicitly narrow the runtime to one provider:
 
 | Provider | Discovery | Acquisition | Required admission |
 |---|---|---|---|
