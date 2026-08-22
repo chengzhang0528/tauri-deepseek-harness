@@ -28,21 +28,21 @@ WebView 中唯一允许呈现的 Web 内容是当前受管 runtime 执行 `dsh w
 | 平台 | Windows 10/11 x64 |
 | 桌面框架 | Tauri 2，复用上游 Harness Web UI |
 | 安装形态 | 当前用户级薄安装器；首次启动允许联网准备私有运行时 |
-| 分发模式 | `self-use`；Windows x64 MSI 通过匹配版本 Tag 的 GitHub Release 提供下载，runtime 闭包仍通过 OSS 交付；应用自有二进制可不做发布者签名，但必须绑定源码提交、版本、大小、SHA-256 与 doctor 结果 |
-| 应用自有二进制来源 | Installer/Launcher MSI：GitHub Release；runtime manifest 与 payload：scheme `https`, host `shared-public-assets.oss-cn-beijing.aliyuncs.com`, prefix `atlas-dsh-desktop/` |
+| 分发模式 | `self-use`；Windows x64 MSI 通过匹配版本 Tag 的 GitHub Release 提供下载，项目发布的 runtime 闭包仍通过 OSS 交付；客户端默认也可复用本地已验证闭包和授权 npm closure；应用自有二进制可不做发布者签名，但必须绑定源码提交、版本、大小、SHA-256 与 doctor 结果 |
+| 应用自有二进制来源 | Installer/Launcher MSI：GitHub Release；项目 runtime manifest 与 payload：scheme `https`, host `shared-public-assets.oss-cn-beijing.aliyuncs.com`, prefix `atlas-dsh-desktop/`；运行期来源策略还包括本地状态和配置的 npm registry closure |
 | 模型 | 不内置本地模型；模型与 API Key 仍由 Harness 的用户配置入口管理 |
 | 窗口关闭 | 有活动任务时隐藏到托盘；无活动任务时可正常退出；托盘“退出”执行受控 drain |
 
 首版不要求系统 Node、全局 PATH、Git、编译器或用户机器上的原生模块构建环境。系统 Git、外部 MCP 程序和其他第三方工具只有在 Harness 对具体能力明确要求时才作为可诊断的外部前置，不冒充内置运行时。
 
-Windows WebView2 是由 Microsoft 服务的系统前置，不属于应用私有 runtime；Installer 必须先探测并通过 Tauri 官方安装模式补足缺失版本，随后重新探测。Installer/Launcher MSI 从对应 GitHub Release 获取，manifest 与 runtime payload 仍只从上述 OSS 前缀交付。
+Windows WebView2 是由 Microsoft 服务的系统前置，不属于应用私有 runtime；Installer 必须先探测并通过 Tauri 官方安装模式补足缺失版本，随后重新探测。Installer/Launcher MSI 从对应 GitHub Release 获取，项目发布的 manifest 与 runtime payload 仍只从上述 OSS 前缀交付；客户端 npm 来源不得绕过 closure、完整性和 doctor 校验。
 
 ## 用户可见行为
 
 1. 安装、修复和卸载状态由 Windows Installer 表达；首次启动的下载、校验、解压、doctor 与失败恢复由原生 TaskDialog、托盘和系统通知表达，不先打开 WebView，也不出现桌面端页面。
 2. 运行时身份验证 ready 后，DSH Desktop 动态创建唯一 WebView 窗口并直接加载本次启动产生的 dsh 回环 URL；窗口内完整内容归 dsh，不额外打开浏览器或终端窗口。
 3. 下载失败、空间不足、校验失败、doctor 失败或 runtime 异常退出时，关闭或隐藏失效的 WebView，保留当前可运行版本与用户数据，并通过原生对话框显示失败组件、阶段、诊断位置和重试/退出动作；不得显示替代页面。
-4. 应用可后台检查并暂存兼容更新；检查入口和确认动作只存在于原生托盘菜单与对话框。切换版本、重启或退出不得打断活动任务，必须等待 drain 并由用户确认。
+4. 应用可后台检查并暂存兼容更新；默认合并 local/OSS/npm 来源，也可在 `%APPDATA%\DSH Desktop\client-settings.json` 固定来源和具体版本。检查入口和确认动作只存在于原生托盘菜单与对话框。切换版本、重启或退出不得打断活动任务，必须等待 drain 并由用户确认。
 5. 卸载默认删除安装器和运行时拥有的文件，保留 Harness 配置、会话、工作区登记和用户结果；删除用户数据必须是单独的明确选择。
 
 ## 数据与兼容性

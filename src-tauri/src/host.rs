@@ -13,9 +13,19 @@ use url::Url;
 use crate::dialogs;
 use crate::paths::AppPaths;
 use crate::process::HarnessProcess;
-use crate::runtime::{PreparedRuntime, RuntimeManager, StagedRelease};
+use crate::runtime::{
+    AvailableUpdate, PreparedRuntime, RuntimeManager, RuntimeSource, StagedRelease,
+};
 
 const WINDOW_LABEL: &str = "dsh";
+
+fn source_label(source: RuntimeSource) -> &'static str {
+    match source {
+        RuntimeSource::Local => "本地",
+        RuntimeSource::Oss => "OSS",
+        RuntimeSource::Npm => "npm",
+    }
+}
 
 #[derive(Clone, Default)]
 struct HostState {
@@ -37,7 +47,7 @@ enum UpdatePhase {
 #[derive(Debug, Clone)]
 struct UpdateState {
     phase: UpdatePhase,
-    available: Option<String>,
+    available: Option<AvailableUpdate>,
     staged: Option<StagedRelease>,
     busy: bool,
 }
@@ -128,7 +138,10 @@ fn bootstrap_runtime(app: AppHandle, state: HostState) {
                 }
                 if let Some(staged) = staged {
                     if let Ok(mut update) = state.update.lock() {
-                        update.available = Some(staged.release.clone());
+                        update.available = Some(AvailableUpdate {
+                            release: staged.release.clone(),
+                            source: staged.source,
+                        });
                         update.staged = Some(staged);
                         update.phase = UpdatePhase::Restart;
                         update.busy = false;
@@ -201,14 +214,16 @@ fn run_update_check(state: HostState, automatic: bool) {
         return;
     }
     thread::spawn(move || {
-        let result = (|| -> Result<Option<String>> {
+        let result = (|| -> Result<Option<AvailableUpdate>> {
             let paths = AppPaths::discover()?;
             RuntimeManager::new(paths)?.check_for_update()
         })();
         match result {
-            Ok(Some(version)) => {
+            Ok(Some(update_available)) => {
+                let version = update_available.release.clone();
+                let source = source_label(update_available.source);
                 if let Ok(mut update) = state.update.lock() {
-                    update.available = Some(version.clone());
+                    update.available = Some(update_available);
                     update.phase = UpdatePhase::Stage;
                     update.busy = false;
                 }
@@ -216,7 +231,10 @@ fn run_update_check(state: HostState, automatic: bool) {
                 if automatic {
                     stage_update(state, false);
                 } else {
-                    dialogs::info("DSH Desktop", format!("发现可用运行时更新：{version}"));
+                    dialogs::info(
+                        "DSH Desktop",
+                        format!("发现可用运行时更新：{version}（来源：{source}）"),
+                    );
                 }
             }
             Ok(None) => {
@@ -257,9 +275,14 @@ fn stage_update(state: HostState, notify: bool) {
         match result {
             Ok(Some(staged)) => {
                 let version = staged.release.clone();
+                let source = source_label(staged.source);
+                let staged_source = staged.source;
                 if let Ok(mut update) = state.update.lock() {
                     update.staged = Some(staged);
-                    update.available = Some(version.clone());
+                    update.available = Some(AvailableUpdate {
+                        release: version.clone(),
+                        source: staged_source,
+                    });
                     update.phase = UpdatePhase::Restart;
                     update.busy = false;
                 }
@@ -267,7 +290,9 @@ fn stage_update(state: HostState, notify: bool) {
                 if notify {
                     dialogs::info(
                         "DSH Desktop",
-                        format!("运行时 {version} 已下载并通过 doctor，可从托盘重启激活。"),
+                        format!(
+                            "运行时 {version}（来源：{source}）已下载并通过 doctor，可从托盘重启激活。"
+                        ),
                     );
                 }
             }

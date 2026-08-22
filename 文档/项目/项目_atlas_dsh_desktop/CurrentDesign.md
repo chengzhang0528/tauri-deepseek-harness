@@ -10,15 +10,15 @@ Depends On:
 
 ## 评审结论
 
-采用稳定的 Tauri 2 Native Host/Launcher 管理版本化私有 Node 24 与固定 DeepSeek Harness 运行时闭包。首版使用联网薄安装器和单一 OSS 制品闭包；不在用户机器执行 `npm install @latest`，不复用系统 Node，不固定 3080 端口。已批准方向完整，可进入编码；本设计不授权独立 SystemTest 或正式发布。
+采用稳定的 Tauri 2 Native Host/Launcher 管理版本化私有 Node 24 与固定 DeepSeek Harness 运行时闭包。联网薄安装器默认合并本地已验证 runtime、配置的 OSS catalog/bootstrap 和授权 npm registry 闭包，选择最高兼容版本；不在用户机器执行 `npm install @latest`，不复用系统 Node，不固定 3080 端口。已批准方向完整，可进入编码；本设计不授权独立 SystemTest 或正式发布。
 
 | 结果/决策 | 当前支持 | 必需变化 | 用户表面 | 所有者 | 持久化影响 | 证据 | 开放决策 |
 |---|---|---|---|---|---|---|---|
 | 桌面宿主 | 工作区无产品源码；参考实现证明 Tauri 壳可行 | 建立无前端 bundle 的 Tauri 2 原生宿主、托盘、单实例和隐藏后台进程 | runtime ready 后只显示完整 dsh Web UI | Native Host | 只保存原生客户端偏好；不拥有业务数据 | 上游已有 `dsh web`；参考项目 `a8f32fdb` | 无 |
-| 私有运行时 | 上游要求 Node `^22.19.0 || >=24.0.0` | 固定 Node 24、dsh、pnpm、原生模块和 ripgrep 的 win-x64 闭包 | 原生 TaskDialog、托盘与系统通知 | Launcher | 新增版本化 runtime/cache/staging | Windows 测量闭包下限超过 282 MiB | 无 |
+| 私有运行时 | 上游要求 Node `^22.19.0 || >=24.0.0` | 固定 Node 24、dsh、pnpm、原生模块和 ripgrep 的 win-x64 闭包；local/OSS/npm 候选统一做 digest、closure 和 doctor 校验 | 原生 TaskDialog、托盘与系统通知 | Launcher | 新增版本化 runtime/cache/staging 与 client-settings | Windows 测量闭包下限超过 282 MiB | 无 |
 | 服务启动 | 上游支持随机端口和 `--no-open` | 解析 readiness，验证 Harness bootstrap 后才创建外部 URL WebView | 完整 dsh 工作台，无桌面端页面 | Process Supervisor | 无业务持久化变化 | 上游 `dsh web --port 0 --no-open` | 无 |
 | 退出与托盘 | 参考实现只会 `taskkill /T /F` | Job Object、桌面桥、活动任务 drain、原生确认和明确强退 | 托盘与原生 TaskDialog | Native Host + Bridge | 只保存客户端偏好 | Windows 不能可靠向隐藏进程投递上游依赖的 `SIGTERM` | 无 |
-| 更新与恢复 | 当前无客户端更新实现 | manifest 下载、校验、doctor、暂存、确认激活和 forward repair | 原生托盘命令、TaskDialog 与系统通知 | Launcher + Native Host | 新增 current/staged 指针；用户数据不迁入 | 上游 developer preview 不保证数据向后兼容 | 无 |
+| 更新与恢复 | 当前无客户端更新实现 | 默认合并 local/OSS/npm 候选；按设置固定来源/版本；manifest/完整闭包下载、校验、doctor、暂存、确认激活和 forward repair | 原生托盘命令、TaskDialog 与系统通知 | Launcher + Native Host | 新增 current/staged 指针和 client-settings；用户数据不迁入 | 上游 developer preview 不保证数据向后兼容 | 无 |
 | 分发 | 当前无本项目制品 | 匹配版本 Tag 的 GitHub Actions 先构建 MSI 和受检 runtime 闭包，将 ZIP/manifest 回读后提交到 `atlas-dsh-desktop/` OSS Bootstrap，最后发布同名 GitHub Release MSI | Setup、修复、卸载 | Installer + Release tooling | 安装注册与用户数据分离 | 已批准薄安装器、自用分发、GitHub Release 下载和唯一 OSS 前缀 | 无 |
 
 ## 目标架构
@@ -67,11 +67,13 @@ root: atlas-dsh-desktop/
   third-party/<component>/windows-x64/<sha256>/<upstream-file>
 ```
 
-Bootstrap 是唯一可变入口；它保留顶层 `release`、`minimumLauncher` 和 `manifest` 作为旧 Launcher 的兼容回退，并可指向一个 immutable release catalog。Catalog 对象按 `catalog/<catalog-release>/windows-x64/catalog.json` 发布，包含多个 runtime 候选及各自的 `release`、`minimumLauncher` 和 manifest AssetRef；客户端按本地 Launcher 版本过滤，跳过低于当前 runtime 的候选，选择最高兼容版本，普通 runtime 更新不要求重装 Launcher。Catalog 自身通过 Bootstrap AssetRef 校验，发布后不得覆盖。对象键不可由文件名猜测，不使用目录 List、npm registry 或 GitHub Release 作为运行期回退源。
+Bootstrap 是唯一可变 OSS 入口；它保留顶层 `release`、`minimumLauncher` 和 `manifest` 作为旧 Launcher 的兼容回退，并可指向一个 immutable release catalog。Catalog 对象按 `catalog/<catalog-release>/windows-x64/catalog.json` 发布，包含多个 runtime 候选及各自的 `release`、`minimumLauncher` 和 manifest AssetRef；客户端按本地 Launcher 版本过滤，跳过低于当前 runtime 的候选，选择最高兼容版本，普通 runtime 更新不要求重装 Launcher。Catalog 自身通过 Bootstrap AssetRef 校验，发布后不得覆盖。对象键不可由文件名猜测；运行期 `auto` 可在明确配置的 OSS 之外复用本地已验证闭包和带完整 closure descriptor 的授权 npm 包，不引入隐式 registry/GitHub 回退。
 
-所有组件在冻结候选前于 Windows x64 构建：`node-pty`、`koffi`、`sharp` 等原生依赖必须在目标 Node ABI 上加载通过；ripgrep 执行 `--version`；dsh 执行 `--version` 并完成一次随机端口启动 doctor。用户机器不运行编译器和 `npm install`。
+所有组件在冻结候选前于 Windows x64 构建：`node-pty`、`koffi`、`sharp` 等原生依赖必须在目标 Node ABI 上加载通过；ripgrep 执行 `--version`；dsh 执行 `--version` 并完成一次随机端口启动 doctor。用户机器不运行编译器和 `npm install`；npm 运行期候选必须是带完整 closure descriptor、固定 sha512 和可通过同一 doctor 的可解包闭包。
 
-`src-tauri/resources/runtime-versions.windows-x64.json` 是 Windows x64 Node、dsh、pnpm、ripgrep 上游版本、对象 URL 和适用 SHA-256 的唯一所有者；`runtime/package-lock.json` 固定 dsh 的完整 npm 依赖图。`prepare:runtime` 仅在构建机执行：下载并校验 Node/ripgrep，使用 private Node 对锁文件执行 `npm ci`，再物化 bridge、doctor、许可证通知和版本元数据。它接受已取得的 Node/ripgrep ZIP 作为本地构建输入，但仍要求同一固定 SHA-256；用户安装后的 Launcher 不读取这些构建机输入，也不从 npm、GitHub 或系统 Node 回退。
+`src-tauri/resources/runtime-versions.windows-x64.json` 是 Windows x64 Node、dsh、pnpm、ripgrep 上游版本、对象 URL 和适用 SHA-256 的唯一所有者；`runtime/package-lock.json` 固定构建机 dsh 的完整 npm 依赖图。`prepare:runtime` 仅在构建机执行：下载并校验 Node/ripgrep，使用 private Node 对锁文件执行 `npm ci`，再物化 bridge、doctor、许可证通知和版本元数据。用户安装后的 Launcher 不读取这些构建机输入，也不运行 npm install；它只接受已验证的 local/OSS/npm runtime closure。
+
+授权 npm 包必须在 packument 的版本条目中提供 `dshDesktopRuntime.manifest` 和单一 `packageRoot`（默认 `package`）；manifest 的 doctor 必须能在 tarball 解包后的完整 closure 上通过，`dist.integrity` 必须是 sha512。只有满足这些字段的版本才是候选；仅有 `@deepseek-ai/dsh` 版本号不会触发激活。
 
 ## 本地目录和状态
 
@@ -96,7 +98,7 @@ API Key、Token、任务正文、审批理由和完整模型输出不得进入�
 ## 启动与身份确认
 
 1. Launcher 获取进程级互斥锁，读取内置 seed Bootstrap，再尝试读取公共 Bootstrap。
-2. 读取公共 Bootstrap；若存在 catalog，则下载并校验 immutable catalog，按本地 Launcher 兼容性和当前 release 选择最高候选；无 catalog 时使用顶层 manifest 作为单候选回退。探测候选 release；缺失时下载至私有 `.part`，限制最大字节数并支持取消。
+2. 读取 client-settings，默认探测本地 current/staged、公共 Bootstrap/catalog 和授权 npm packument；校验来源身份、Launcher 兼容性、当前 release 和完整闭包，选择最高候选。OSS 无 catalog 时使用顶层 manifest 回退；npm 仅接受带完整 closure descriptor 的版本。探测候选 release；缺失时下载至私有 `.part`，限制最大字节数并支持取消。
 3. 依次校验字节数、SHA-256、平台、架构和 provenance；用生产解包器拒绝绝对路径、`..`、重复项、链接和越界目标。
 4. 在全新 staging 中执行全部 doctor，成功后原子写入 `current.json`；失败只清理当前 staging。
 5. Rust 后端以 `CREATE_NO_WINDOW` 启动私有 Node，设置独立 `DSH_HOME`，保留 stdin 控制通道，并传入 `dsh web --port 0 --no-open`。
@@ -127,7 +129,7 @@ bridge 只为桌面进程退出和更新激活提供活动工作数与 drain，�
 
 ## 更新和恢复
 
-Launcher 启动时以及 Native Host 运行期间约每六小时检查一次。后台读取 Bootstrap/catalog，只下载、校验、doctor 和暂存最高兼容 runtime；不创建 Service 或计划任务，不自动激活，不强关活动任务。若 catalog 暂时没有兼容候选，已有 current runtime 继续使用，不降级；没有可用 current runtime 才报告准备失败。
+Launcher 启动时以及 Native Host 运行期间约每六小时检查一次。后台按 client-settings 读取 local/OSS/npm 候选，只下载、校验、doctor 和暂存最高兼容 runtime；不创建 Service 或计划任务，不自动激活，不强关活动任务。若某个来源不可用，`auto` 继续使用其他来源；若没有兼容候选，已有 current runtime 继续使用，不降级；没有可用 current runtime 才报告准备失败。
 
 托盘中的单一更新菜单项按 `检查更新 -> 下载/暂存 -> 等待任务 -> 确认重启 -> 激活` 变换意图，进度、确认和失败由原生 TaskDialog/系统通知表达，不在 dsh 页面增加控件。激活前重新校验 manifest、digest、Launcher 兼容性和活动任务数，原子切换 `current.json` 后启动新 runtime，完成 Harness 身份检查并确认 dsh 页面可加载。
 

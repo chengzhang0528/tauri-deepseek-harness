@@ -81,6 +81,10 @@ impl AppPaths {
     pub fn repair_record(&self) -> PathBuf {
         self.state.join("repair.json")
     }
+
+    pub fn settings_path(&self) -> PathBuf {
+        self.roaming_root.join("client-settings.json")
+    }
 }
 
 #[cfg(test)]
