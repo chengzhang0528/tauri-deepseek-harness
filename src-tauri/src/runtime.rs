@@ -39,7 +39,7 @@ const DEFAULT_NPM_PACKAGE: &str = "@deepseek-ai/dsh";
 const MAX_NPM_PACKUMENT_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_NPM_TARBALL_BYTES: u64 = MAX_ARTIFACT_BYTES;
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum RuntimeSource {
     Local,
@@ -879,6 +879,22 @@ impl RuntimeManager {
             }))
     }
 
+    /// Lists every compatible runtime version visible to the current source policy.
+    ///
+    /// This is intentionally broader than `check_for_update`: the native UI needs to
+    /// let users choose a concrete source/version pair, while still hiding candidates
+    /// that cannot be activated by this Launcher or would downgrade the current runtime.
+    pub fn list_available_versions(&self) -> Result<Vec<AvailableUpdate>> {
+        let current = self.read_current()?;
+        let settings = self.read_settings()?;
+        let candidates = self.discover_candidates(&settings, current.as_ref())?;
+        Ok(list_compatible_versions(
+            candidates,
+            current.as_ref(),
+            &settings,
+        ))
+    }
+
     /// Download, verify, unpack, and doctor a compatible runtime without changing current.
     pub fn stage_update(&self) -> Result<Option<StagedRelease>> {
         self.paths.create()?;
@@ -1177,6 +1193,43 @@ impl RuntimeManager {
         atomic_replace(&temporary, &pointer)
             .with_context(|| format!("cannot publish {}", pointer.display()))
     }
+}
+
+fn list_compatible_versions(
+    candidates: Vec<RuntimeCandidate>,
+    current: Option<&CurrentRelease>,
+    settings: &RuntimeUpdateSettings,
+) -> Vec<AvailableUpdate> {
+    let mut seen = HashSet::new();
+    let mut versions = candidates
+        .into_iter()
+        .filter(|candidate| settings.source.accepts(candidate.source))
+        .filter(|candidate| {
+            compare_versions(&candidate.minimum_launcher, LAUNCHER_VERSION)
+                .is_ok_and(|ordering| !ordering.is_gt())
+        })
+        .filter(|candidate| {
+            current.is_none_or(|current| {
+                compare_versions(&candidate.release, &current.release)
+                    .is_ok_and(|ordering| !ordering.is_lt())
+            })
+        })
+        .filter_map(|candidate| {
+            if !seen.insert((candidate.release.clone(), candidate.source)) {
+                return None;
+            }
+            Some(AvailableUpdate {
+                release: candidate.release,
+                source: candidate.source,
+            })
+        })
+        .collect::<Vec<_>>();
+    versions.sort_by(|left, right| {
+        compare_versions(&right.release, &left.release)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| right.source.rank().cmp(&left.source.rank()))
+    });
+    versions
 }
 
 fn read_json_state<T>(path: &Path, label: &str) -> Result<Option<T>>
@@ -1871,6 +1924,42 @@ mod tests {
         .expect("multi-source candidate");
         assert_eq!(selected.release, "1.4.0");
         assert_eq!(selected.source, RuntimeSource::Npm);
+    }
+
+    #[test]
+    fn available_versions_are_sorted_deduplicated_and_filtered() {
+        let current = CurrentRelease {
+            release: "1.2.0".into(),
+            manifest_sha256: "a".repeat(64),
+            manifest: None,
+            manifest_snapshot_sha256: None,
+            source: RuntimeSource::Oss,
+            source_identity: None,
+        };
+        let versions = list_compatible_versions(
+            vec![
+                candidate_with_source("1.4.0", "0.1.0", 'a', RuntimeSource::Oss),
+                candidate_with_source("1.4.0", "0.1.0", 'b', RuntimeSource::Oss),
+                candidate_with_source("1.3.0", "0.1.0", 'c', RuntimeSource::Npm),
+                candidate_with_source("1.1.0", "0.1.0", 'd', RuntimeSource::Local),
+                candidate_with_source("1.5.0", "9.0.0", 'e', RuntimeSource::Local),
+            ],
+            Some(&current),
+            &RuntimeUpdateSettings::default(),
+        );
+        assert_eq!(
+            versions,
+            vec![
+                AvailableUpdate {
+                    release: "1.4.0".into(),
+                    source: RuntimeSource::Oss,
+                },
+                AvailableUpdate {
+                    release: "1.3.0".into(),
+                    source: RuntimeSource::Npm,
+                },
+            ]
+        );
     }
 
     #[test]

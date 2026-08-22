@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, Submenu};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_single_instance::init as single_instance;
@@ -15,9 +16,12 @@ use crate::paths::AppPaths;
 use crate::process::HarnessProcess;
 use crate::runtime::{
     AvailableUpdate, PreparedRuntime, RuntimeManager, RuntimeSource, StagedRelease,
+    UpdateSourcePolicy,
 };
 
 const WINDOW_LABEL: &str = "dsh";
+
+type SourceMenuItems = Vec<(UpdateSourcePolicy, CheckMenuItem<tauri::Wry>)>;
 
 fn source_label(source: RuntimeSource) -> &'static str {
     match source {
@@ -27,6 +31,35 @@ fn source_label(source: RuntimeSource) -> &'static str {
     }
 }
 
+fn source_policy_label(source: UpdateSourcePolicy) -> &'static str {
+    match source {
+        UpdateSourcePolicy::Auto => "自动",
+        UpdateSourcePolicy::Local => "本地",
+        UpdateSourcePolicy::Oss => "OSS",
+        UpdateSourcePolicy::Npm => "npm",
+    }
+}
+
+fn source_policy_id(source: UpdateSourcePolicy) -> &'static str {
+    match source {
+        UpdateSourcePolicy::Auto => "runtime-source-auto",
+        UpdateSourcePolicy::Local => "runtime-source-local",
+        UpdateSourcePolicy::Oss => "runtime-source-oss",
+        UpdateSourcePolicy::Npm => "runtime-source-npm",
+    }
+}
+
+fn source_policy_from_id(id: &str) -> Option<UpdateSourcePolicy> {
+    [
+        UpdateSourcePolicy::Auto,
+        UpdateSourcePolicy::Local,
+        UpdateSourcePolicy::Oss,
+        UpdateSourcePolicy::Npm,
+    ]
+    .into_iter()
+    .find(|source| source_policy_id(*source) == id)
+}
+
 #[derive(Clone, Default)]
 struct HostState {
     process: Arc<Mutex<Option<HarnessProcess>>>,
@@ -34,6 +67,10 @@ struct HostState {
     updating: Arc<AtomicBool>,
     update: Arc<Mutex<UpdateState>>,
     update_item: Arc<Mutex<Option<MenuItem<tauri::Wry>>>>,
+    source_items: Arc<Mutex<SourceMenuItems>>,
+    version_menu: Arc<Mutex<Option<Submenu<tauri::Wry>>>>,
+    version_items: Arc<Mutex<Vec<MenuItem<tauri::Wry>>>>,
+    version_selections: Arc<Mutex<HashMap<String, (RuntimeSource, String)>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,9 +116,54 @@ pub fn run() {
 }
 
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let source_policies = [
+        UpdateSourcePolicy::Auto,
+        UpdateSourcePolicy::Local,
+        UpdateSourcePolicy::Oss,
+        UpdateSourcePolicy::Npm,
+    ];
+    let source_items = source_policies
+        .into_iter()
+        .map(|source| {
+            CheckMenuItem::with_id(
+                app,
+                source_policy_id(source),
+                source_policy_label(source),
+                true,
+                source == UpdateSourcePolicy::Auto,
+                None::<&str>,
+            )
+            .map(|item| (source, item))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let source_refs = source_items
+        .iter()
+        .map(|(_, item)| item as &dyn tauri::menu::IsMenuItem<_>)
+        .collect::<Vec<_>>();
+    let source_menu = Submenu::with_id_and_items(
+        app,
+        "runtime-source-menu",
+        "Runtime source",
+        true,
+        &source_refs,
+    )?;
+    let version_placeholder = MenuItem::with_id(
+        app,
+        "runtime-version-loading",
+        "正在检查可用版本…",
+        false,
+        None::<&str>,
+    )?;
+    let version_menu = Submenu::with_id_and_items(
+        app,
+        "runtime-version-menu",
+        "Runtime version",
+        true,
+        &[&version_placeholder],
+    )?;
     let check_item = MenuItem::with_id(app, "check", "Check for updates", true, None::<&str>)?;
     let exit_item = MenuItem::with_id(app, "exit", "Exit DSH Desktop", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&check_item, &exit_item])?;
+    let menu = Menu::with_items(app, &[&source_menu, &version_menu, &check_item, &exit_item])?;
 
     TrayIconBuilder::with_id("dsh-desktop")
         .menu(&menu)
@@ -94,10 +176,19 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let _ = window.set_focus();
             }
         })
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "check" => update_action(app.clone()),
-            "exit" => graceful_exit(app.clone()),
-            _ => {}
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref().to_owned();
+            match id.as_str() {
+                "check" => update_action(app.clone()),
+                "exit" => graceful_exit(app.clone()),
+                _ => {
+                    if let Some(source) = source_policy_from_id(&id) {
+                        select_runtime_source(app, source);
+                    } else if id.starts_with("runtime-version-") {
+                        select_runtime_version(app, &id);
+                    }
+                }
+            }
         })
         .build(app)?;
 
@@ -105,10 +196,196 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(mut item) = state.update_item.lock() {
         *item = Some(check_item.clone());
     }
+    if let Ok(mut items) = state.source_items.lock() {
+        *items = source_items;
+    }
+    if let Ok(mut menu_slot) = state.version_menu.lock() {
+        *menu_slot = Some(version_menu);
+    }
+    if let Ok(mut items) = state.version_items.lock() {
+        *items = vec![version_placeholder];
+    }
     app.manage(state.clone());
     let handle = app.handle().clone();
+    refresh_runtime_versions(state.clone());
     thread::spawn(move || bootstrap_runtime(handle, state));
     Ok(())
+}
+
+fn runtime_source_policy(source: RuntimeSource) -> UpdateSourcePolicy {
+    match source {
+        RuntimeSource::Local => UpdateSourcePolicy::Local,
+        RuntimeSource::Oss => UpdateSourcePolicy::Oss,
+        RuntimeSource::Npm => UpdateSourcePolicy::Npm,
+    }
+}
+
+fn source_policy_accepts(policy: UpdateSourcePolicy, source: RuntimeSource) -> bool {
+    matches!(
+        (policy, source),
+        (UpdateSourcePolicy::Auto, _)
+            | (UpdateSourcePolicy::Local, RuntimeSource::Local)
+            | (UpdateSourcePolicy::Oss, RuntimeSource::Oss)
+            | (UpdateSourcePolicy::Npm, RuntimeSource::Npm)
+    )
+}
+
+fn refresh_source_checks(state: &HostState, selected: UpdateSourcePolicy) {
+    if let Ok(items) = state.source_items.lock() {
+        for (source, item) in items.iter() {
+            let _ = item.set_checked(*source == selected);
+        }
+    }
+}
+
+fn refresh_runtime_versions(state: HostState) {
+    thread::spawn(move || {
+        let result = (|| -> Result<_> {
+            let paths = AppPaths::discover()?;
+            let manager = RuntimeManager::new(paths)?;
+            let settings = manager.read_settings()?;
+            let versions = manager.list_available_versions()?;
+            refresh_source_checks(&state, settings.source);
+            Ok((versions, settings.source, settings.version))
+        })();
+        render_runtime_versions(&state, result);
+    });
+}
+
+fn render_runtime_versions(
+    state: &HostState,
+    result: Result<(Vec<AvailableUpdate>, UpdateSourcePolicy, Option<String>)>,
+) {
+    let Ok(menu) = state.version_menu.lock() else {
+        return;
+    };
+    let Some(menu) = menu.as_ref() else {
+        return;
+    };
+    let old_items = state
+        .version_items
+        .lock()
+        .map(|mut items| std::mem::take(&mut *items))
+        .unwrap_or_default();
+    for item in old_items {
+        let _ = menu.remove(&item);
+    }
+    if let Ok(mut selections) = state.version_selections.lock() {
+        selections.clear();
+    }
+
+    let (versions, selected_source, selected_version) = match result {
+        Ok(result) => result,
+        Err(error) => {
+            if let Ok(item) = MenuItem::with_id(
+                menu.app_handle(),
+                "runtime-version-error",
+                format!("无法读取版本：{error:#}"),
+                false,
+                None::<&str>,
+            ) {
+                let _ = menu.append(&item);
+                if let Ok(mut items) = state.version_items.lock() {
+                    *items = vec![item];
+                }
+            }
+            return;
+        }
+    };
+
+    let mut items = Vec::with_capacity(versions.len());
+    for (index, version) in versions.iter().enumerate() {
+        let selected = selected_version.as_deref() == Some(version.release.as_str())
+            && source_policy_accepts(selected_source, version.source);
+        let marker = if selected { "✓ " } else { "" };
+        let label = format!(
+            "{marker}{} ({})",
+            version.release,
+            source_label(version.source)
+        );
+        let id = format!("runtime-version-{index}");
+        let Ok(item) = MenuItem::with_id(menu.app_handle(), &id, label, true, None::<&str>) else {
+            continue;
+        };
+        if let Ok(mut selections) = state.version_selections.lock() {
+            selections.insert(id, (version.source, version.release.clone()));
+        }
+        items.push(item);
+    }
+    if items.is_empty() {
+        if let Ok(item) = MenuItem::with_id(
+            menu.app_handle(),
+            "runtime-version-empty",
+            "没有可激活的兼容版本",
+            false,
+            None::<&str>,
+        ) {
+            let _ = menu.append(&item);
+            items.push(item);
+        }
+    } else {
+        let refs = items
+            .iter()
+            .map(|item| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
+            .collect::<Vec<_>>();
+        let _ = menu.append_items(&refs);
+    }
+    if let Ok(mut stored) = state.version_items.lock() {
+        *stored = items;
+    }
+}
+
+fn select_runtime_source(app: &AppHandle, source: UpdateSourcePolicy) {
+    let state = app.state::<HostState>().inner().clone();
+    thread::spawn(move || {
+        let result = (|| -> Result<()> {
+            let paths = AppPaths::discover()?;
+            let manager = RuntimeManager::new(paths)?;
+            let mut settings = manager.read_settings()?;
+            settings.source = source;
+            settings.version = None;
+            manager.write_settings(&settings)
+        })();
+        match result {
+            Ok(()) => {
+                refresh_source_checks(&state, source);
+                refresh_runtime_versions(state.clone());
+                run_update_check(state, true, true);
+            }
+            Err(error) => dialogs::error("DSH Desktop", format!("保存运行时来源失败：{error:#}")),
+        }
+    });
+}
+
+fn select_runtime_version(app: &AppHandle, id: &str) {
+    let state = app.state::<HostState>().inner().clone();
+    let selection = state
+        .version_selections
+        .lock()
+        .ok()
+        .and_then(|selections| selections.get(id).cloned());
+    let Some((source, version)) = selection else {
+        return;
+    };
+    thread::spawn(move || {
+        let policy = runtime_source_policy(source);
+        let result = (|| -> Result<()> {
+            let paths = AppPaths::discover()?;
+            let manager = RuntimeManager::new(paths)?;
+            let mut settings = manager.read_settings()?;
+            settings.source = policy;
+            settings.version = Some(version);
+            manager.write_settings(&settings)
+        })();
+        match result {
+            Ok(()) => {
+                refresh_source_checks(&state, policy);
+                refresh_runtime_versions(state.clone());
+                run_update_check(state, true, true);
+            }
+            Err(error) => dialogs::error("DSH Desktop", format!("保存运行时版本失败：{error:#}")),
+        }
+    });
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -187,13 +464,14 @@ fn open_dsh_window(app: &AppHandle, url: Url) -> Result<()> {
 
 fn update_action(app: AppHandle) {
     let state = app.state::<HostState>().inner().clone();
+    refresh_runtime_versions(state.clone());
     let phase = state
         .update
         .lock()
         .ok()
         .map_or(UpdatePhase::Check, |state| state.phase);
     match phase {
-        UpdatePhase::Check | UpdatePhase::Failed => run_update_check(state, false),
+        UpdatePhase::Check | UpdatePhase::Failed => run_update_check(state, false, true),
         UpdatePhase::Stage => stage_update(state, true),
         UpdatePhase::Restart => activate_update(app, state),
     }
@@ -201,15 +479,15 @@ fn update_action(app: AppHandle) {
 
 fn start_update_scheduler(state: HostState) {
     thread::spawn(move || {
-        run_update_check(state.clone(), true);
+        run_update_check(state.clone(), true, false);
         loop {
             thread::sleep(Duration::from_hours(6));
-            run_update_check(state.clone(), true);
+            run_update_check(state.clone(), true, false);
         }
     });
 }
 
-fn run_update_check(state: HostState, automatic: bool) {
+fn run_update_check(state: HostState, automatic: bool, notify_errors: bool) {
     if !begin_update_work(&state, UpdatePhase::Check) {
         return;
     }
@@ -255,7 +533,7 @@ fn run_update_check(state: HostState, automatic: bool) {
                     update.busy = false;
                 }
                 set_update_text(&state, "Retry update check");
-                if !automatic {
+                if !automatic || notify_errors {
                     dialogs::error("DSH Desktop", format!("检查更新失败：{error:#}"));
                 }
             }
