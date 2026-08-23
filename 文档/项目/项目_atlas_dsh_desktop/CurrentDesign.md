@@ -162,6 +162,7 @@ Launcher 启动时以及 Native Host 运行期间约每六小时检查一次。�
 - WebView 只在 Harness 身份验证后创建并直接加载 dsh URL；加载文档具有 dsh 的 `window.__DSH_BOOT__`，不存在桌面端自有 DOM、样式、脚本或注入，远程页面调用 Tauri API 被拒绝。
 - runtime 未 ready 或异常退出时不显示 WebView 兜底页；下载、doctor、更新、退出和故障动作均可从 Windows Installer、原生 TaskDialog、托盘或系统通知完成。
 - Windows 后台过程不闪终端；Launcher 正常退出和崩溃后均无其拥有的残留进程。
+- MSI 安装、升级、修复或卸载发现 DSH Desktop 主进程仍在运行时，先显示可取消的 5 秒倒计时；用户取消则中止本次安装，倒计时结束则只强制结束安装目录内已验证的主进程及其 Job Object 子进程，确保 MSI 能替换被占用文件。
 - 活动任务时关闭窗口不终止任务；显式退出完成 drain；强退必须来自单独用户意图。
 - 更新失败不改变 current 或用户数据；兼容候选可暂存，激活需用户确认；不兼容 Launcher 显示 `setup-required`。
 - 当前用户 MSI 的安装、修复和卸载边界可由构建产物检查证明，Installer 字节数、首启下载量和最终占用分别报告。

@@ -39,7 +39,7 @@ Windows WebView2 是由 Microsoft 服务的系统前置，不属于应用私有 
 
 ## 用户可见行为
 
-1. 安装、修复和卸载状态由 Windows Installer 表达；首次启动的下载、校验、解压、doctor 与失败恢复由原生 TaskDialog、托盘和系统通知表达，不先打开 WebView，也不出现桌面端页面。
+1. 安装、修复和卸载状态由 Windows Installer 表达；如果 MSI 发现 DSH Desktop 仍在运行，先显示可取消的 5 秒倒计时，取消则中止安装，倒计时结束只强制结束产品进程树后继续替换文件；首次启动的下载、校验、解压、doctor 与失败恢复由原生 TaskDialog、托盘和系统通知表达，不先打开 WebView，也不出现桌面端页面。
 2. 运行时身份验证 ready 后，DSH Desktop 动态创建唯一 WebView 窗口并直接加载本次启动产生的 dsh 回环 URL；窗口内完整内容归 dsh，不额外打开浏览器或终端窗口。
 3. 下载失败、空间不足、校验失败、doctor 失败或 runtime 异常退出时，关闭或隐藏失效的 WebView，保留当前可运行版本与用户数据，并通过原生对话框显示失败组件、阶段、诊断位置和重试/退出动作；不得显示替代页面。
 4. 应用可后台检查并暂存兼容更新；默认合并 local/OSS/npm 来源，也可在 `%APPDATA%\DSH Desktop\client-settings.json` 固定来源和具体版本。检查入口和确认动作只存在于原生托盘菜单与对话框。切换版本、重启或退出不得打断活动任务，必须等待 drain 并由用户确认。

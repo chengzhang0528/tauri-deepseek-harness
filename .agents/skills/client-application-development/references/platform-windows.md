@@ -14,6 +14,8 @@ Run package-manager, helper, installer, shell, and runtime processes from the ba
 
 When taking over an existing installation, identify processes by verified executable path inside the product installation root. Request normal shutdown first, show a waiting state, and use force termination only at the contract's explicit boundary. Never terminate reused system components or unrelated processes.
 
+Every Windows installer that can replace an in-use application must include an installer-owned process preflight for the product executable. Show a cancellable five-second countdown before takeover; cancellation aborts the install, while allowing the countdown to expire force-terminates only the verified product process tree so MSI can replace locked files. Do not target a shared runtime executable by name alone. The timeout, cancellation path, and forced-cleanup behavior must be visible in the generated MSI and covered by an upgrade smoke check.
+
 ## WebView2 And Desktop Web
 
 Treat WebView2 as a platform prerequisite owned by Microsoft and the installer/framework integration. Probe and repair it through the supported platform path, then re-probe. If another product owns the web surface, the native host must load that exact surface and must not add a startup, error, update, or fallback page.
