@@ -1,10 +1,10 @@
-# DSH Desktop 本机安装与恢复
+# DSH Desktop 运行与发布 Runbook
 
 Status: Active
 Kind: Runbook
-Scope: atlas-dsh-desktop / Windows 当前用户本机操作
+Scope: atlas-dsh-desktop / Windows 当前用户本机操作与 GitHub Release
 Owner: 项目维护者
-Updated: 2026-09-16
+Updated: 2026-09-17
 Depends On:
 - ProductContract.md
 - CurrentDesign.md
@@ -47,4 +47,27 @@ Start-Process -FilePath "$env:LOCALAPPDATA\DSH Desktop\dsh-desktop.exe"
 - 私有副本缺失时同版官方 npm 前向重建。旧 OSS 副本不可重建时选择明确官方版本；不回滚用户数据。
 - npm 准备失败可重试，本机详情在 `%LOCALAPPDATA%\DSH Desktop\cache\npm\_logs`；不复制其中凭据或业务内容。
 - Launcher 替换走 MSI；WebView2 前置由安装器处理，模型或业务认证由 Harness 自己处理。
+
+## GitHub Release
+
+只有 Active DeploymentPlan 固定 Artifact、Tag、公开 GitHub Release Target、当前用户授权、准入证据或明确豁免及回滚后，才执行本节。发布前确认主工作区无不明改动、`origin/main` 包含 Artifact、远端没有同名 Tag，且 `version.json`、Tag 与 `scripts/check-version.mjs` 一致。
+
+```powershell
+$artifactCommit = '<DeploymentPlan Artifact>'
+$releaseVersion = '<DeploymentPlan version>'
+$releaseTag = "v$releaseVersion"
+node --test scripts/release-tag.test.mjs
+node scripts/check-version.mjs --release-version $releaseVersion
+git tag -a $releaseTag $artifactCommit -m "DSH Desktop $releaseVersion"
+git push origin "refs/tags/$releaseTag"
+```
+
+Tag 推送触发 `.github/workflows/release.yml`。等待 `Build Windows MSI` 终态；只接纳 head SHA 等于 Artifact 的成功运行。公开 Release 必须匹配 Tag、不是 Draft 或 prerelease，并且只有预期 Windows x64 MSI。匿名下载该 MSI，记录文件名、字节数和 SHA-256；不得在同一 Tag 下重建或替换附件。
+
+若工作流或公开下载检查失败，先在 GitHub Releases 中删除失败的同名 Release，再删除远端和本地 Tag；上一稳定 Release 保持可下载。删除前再次核对同名 Release 与 Tag 确实属于当前 DeploymentPlan。
+
+```powershell
+git push origin --delete $releaseTag
+git tag -d $releaseTag
+```
 
