@@ -9,6 +9,8 @@ Depends On:
 
 本模板只提供文档驱动协同控制面，不预设产品、技术栈、服务、端口或源码根。
 
+DSH Desktop 领域建模：[模型源目录](../xrain-ontology/建模档案/tauri-deepseek-harness/) · [模型索引](../xrain-ontology/建模档案/tauri-deepseek-harness/模型索引.md)。按当前问题读取基础模型及增量，确认范围以模型为准；直接访问源文件，不依赖目录挂载。
+
 ## 启动
 
 1. 先读 `文档/TASK_CONTROL.md`；仅在用户询问后续或路线图且文件存在时读 `文档/` 下的 `WORK_CANDIDATES.md`。

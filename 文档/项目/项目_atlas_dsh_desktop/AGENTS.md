@@ -12,6 +12,8 @@ Depends On:
 
 ## 路由
 
+- 领域模型、层次确认与需求增量：[模型源目录](../../../../xrain-ontology/建模档案/tauri-deepseek-harness/)及[模型索引](../../../../xrain-ontology/建模档案/tauri-deepseek-harness/模型索引.md)；按当前问题直接读取，不依赖挂载。
+
 - 产品名、平台、安装形态、分发模式、OSS 前缀和用户可见行为：`ProductContract.md`。
 - Tauri、运行时闭包、进程生命周期、更新、状态与实施门禁：`CurrentDesign.md`。
 - 安装器、更新或发布技术工作命中 `client-application-development`；实现受管运行时能力同时命中 `develop-managed-client-capability`。
