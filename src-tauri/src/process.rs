@@ -14,7 +14,9 @@ use uuid::Uuid;
 use crate::job::ProcessJob;
 use crate::runtime::PreparedRuntime;
 
-const READY_TIMEOUT: Duration = Duration::from_secs(30);
+// Official runtime startup can spend about 30 seconds loading on Windows.
+// Leave time for the ready page probe after the listener becomes available.
+const READY_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_LOG_LINE: usize = 16 * 1024;
 const MAX_BRIDGE_LINE: usize = 64 * 1024;
 const MAX_READY_PAGE_BYTES: usize = 2 * 1024 * 1024;

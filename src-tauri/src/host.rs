@@ -132,7 +132,7 @@ fn build_menu(app: &AppHandle, state: &HostState) -> tauri::Result<Menu<tauri::W
             &status,
             &separator()?,
             &item("download", "下载更新")?,
-            &item("activate", "安装已下载的更新…")?,
+            &item("update-now", "立即更新…")?,
             &separator()?,
             &advanced,
         ],
@@ -165,6 +165,7 @@ fn build_menu(app: &AppHandle, state: &HostState) -> tauri::Result<Menu<tauri::W
         true,
         &[
             &item("check", "检查更新…")?,
+            &item("update-now", "立即更新…")?,
             &updates,
             &separator()?,
             &item("about", "关于 DSH Desktop…")?,
@@ -221,22 +222,7 @@ fn dispatch(app: &AppHandle, id: &str) {
             );
             Ok(())
         }),
-        "activate" => operation(app, |app, state| {
-            let manager = manager()?;
-            let confirmed = manager.read_staged()?.context("没有已准备目标，请先下载")?;
-            if !dialogs::confirm(
-                "安装更新",
-                format!(
-                    "安装 DeepSeek Harness {}？\n更新需要重新启动应用。",
-                    confirmed.version_label()
-                ),
-            ) {
-                return Ok(());
-            }
-            require_no_run(state)?;
-            let prepared = manager.activate(&confirmed)?;
-            start_and_present(app, state, &prepared)
-        }),
+        "update-now" => operation(app, |app, state| update_now(app, state, None)),
         "recover" => operation(app, |app, state| {
             {
                 let mut slot = state
@@ -406,6 +392,7 @@ fn check_updates(app: &AppHandle, automatic: bool) {
     if !reserve(&state) {
         return;
     }
+    let app = app.clone();
     thread::spawn(move || {
         let result = (|| {
             feedback(&state, "正在检查官方版本…");
@@ -425,11 +412,18 @@ fn check_updates(app: &AppHandle, automatic: bool) {
                     feedback(
                         &state,
                         &format!(
-                            "Harness {} 已准备，等待确认；{}",
+                            "Harness {} 已下载；选择“帮助 → 立即更新”完成安装。{}",
                             copy.version_label(),
                             summary
                         ),
                     );
+                }
+            } else if check.available.is_some() || manager.read_staged()?.is_some() {
+                if dialogs::confirm(
+                    "发现更新",
+                    format!("{summary}\n\n是否现在更新？下载完成后会请你确认重启。"),
+                ) {
+                    update_now(&app, &state, check.available)?;
                 }
             } else {
                 dialogs::info("检查更新", summary);
@@ -438,6 +432,87 @@ fn check_updates(app: &AppHandle, automatic: bool) {
         })();
         complete(&state, result, !automatic);
     });
+}
+
+/// Downloading never confirms a restart. Keep the exact prepared copy across
+/// the final confirmation, then observe the owned tree ending before activation.
+fn update_now(app: &AppHandle, state: &HostState, selected: Option<AvailableUpdate>) -> Result<()> {
+    let manager = manager()?;
+    let target = selected.or_else(|| {
+        state
+            .check
+            .lock()
+            .ok()
+            .and_then(|check| check.available.clone())
+    });
+    let confirmed = {
+        let _progress = dialogs::Progress::show(state.feedback.clone());
+        if let Some(target) = target {
+            manager.stage_target(&target, &|message| feedback(state, message))?
+        } else if let Some(staged) = manager.read_staged()? {
+            staged
+        } else {
+            let check = manager.check_for_update()?;
+            let summary = check.summary();
+            let Some(target) = check.available else {
+                dialogs::info("软件更新", summary);
+                return Ok(());
+            };
+            manager.stage_target(&target, &|message| feedback(state, message))?
+        }
+    };
+    manager.prepare_for_start(&confirmed)?;
+    let running = {
+        let mut slot = state
+            .process
+            .lock()
+            .map_err(|_| anyhow::anyhow!("暂时无法确认应用状态，请稍后重试"))?;
+        match slot.as_mut() {
+            Some(process) => !process.tree_ended()?,
+            None => false,
+        }
+    };
+    let description = if running {
+        format!(
+            "更新已下载：DeepSeek Harness {}\n\n无法确认所有任务已经完成。强制重启可能中断任务或丢失未保存的内容。\n\n是否现在强制重启并更新？选择“否”可稍后再更新。",
+            confirmed.version_label()
+        )
+    } else {
+        format!(
+            "更新已下载：DeepSeek Harness {}\n\n是否现在安装并打开应用？",
+            confirmed.version_label()
+        )
+    };
+    if !dialogs::confirm("重启并更新", description) {
+        feedback(
+            state,
+            &format!(
+                "{} 已下载；准备好后选择“帮助 → 立即更新”",
+                confirmed.version_label()
+            ),
+        );
+        return Ok(());
+    }
+    {
+        let mut slot = state
+            .process
+            .lock()
+            .map_err(|_| anyhow::anyhow!("暂时无法停止应用，请稍后重试"))?;
+        if let Some(process) = slot.as_mut() {
+            process.kill()?;
+        }
+        *slot = None;
+    }
+    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+        window.hide()?;
+    }
+    let prepared = manager.activate(&confirmed)?;
+    start_and_present(app, state, &prepared)?;
+    dialogs::info(
+        "更新完成",
+        format!("已更新到 DeepSeek Harness {}。", confirmed.version_label()),
+    );
+    Ok(())
 }
 
 fn render_versions(state: &HostState, check: &CheckResult) -> Result<()> {
