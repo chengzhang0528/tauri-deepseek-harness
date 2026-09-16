@@ -17,7 +17,7 @@ use crate::runtime::{
 use crate::{dialogs, paths::AppPaths, process::HarnessProcess};
 
 const WINDOW_LABEL: &str = "dsh";
-const EXIT_GAP: &str = "当前 Harness 未提供完整待完成工作、停止接纳和收尾完成证据。运行已保留；如需停止，请明确选择“强制停止运行”。强制停止可能中断任务，不代表正常收尾。";
+const EXIT_GAP: &str = "当前 Harness 未提供完整待完成工作、停止接纳和收尾完成证据。运行已保留；如需停止，请从“帮助 → 软件更新 → 高级选项”选择“停止后台服务”。强制停止可能中断任务，不代表正常收尾。";
 
 #[derive(Clone, Default)]
 struct HostState {
@@ -90,60 +90,117 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn build_menu(app: &AppHandle, state: &HostState) -> tauri::Result<Menu<tauri::Wry>> {
+    use tauri::menu::PredefinedMenuItem;
     let item = |id, text| MenuItem::with_id(app, id, text, true, None::<&str>);
+    let separator = || PredefinedMenuItem::separator(app);
     let status = MenuItem::with_id(app, "status", "正在启动…", false, None::<&str>)?;
     state.status_items.lock().unwrap().push(status.clone());
-    let versions = Submenu::with_id_and_items(app, "versions", "选择具体目标", true, &[])?;
+    let versions = Submenu::with_id_and_items(app, "versions", "指定版本", true, &[])?;
     state.version_menus.lock().unwrap().push(versions.clone());
     let sources = Submenu::with_id_and_items(
         app,
         "sources",
-        "检查来源",
+        "下载来源",
         true,
         &[
-            &item("source-auto", "自动选择")?,
-            &item("source-npm", "官方 npm")?,
-            &item("source-local", "本地副本")?,
-            &item("source-oss", "旧 OSS 副本")?,
+            &item("source-auto", "自动选择（推荐）")?,
+            &item("source-npm", "官方软件源")?,
+            &item("source-local", "本机已下载的版本")?,
+            &item("source-oss", "旧版安装缓存")?,
+        ],
+    )?;
+    let advanced = Submenu::with_id_and_items(
+        app,
+        "advanced",
+        "高级选项",
+        true,
+        &[
+            &versions,
+            &sources,
+            &separator()?,
+            &item("info", "诊断信息…")?,
+            &item("recover", "恢复应用…")?,
+            &item("force-stop", "停止后台服务…")?,
         ],
     )?;
     let updates = Submenu::with_id_and_items(
         app,
         "updates",
-        "版本与更新",
+        "软件更新",
         true,
         &[
             &status,
-            &item("info", "查看版本与状态")?,
-            &item("check", "检查更新")?,
-            &versions,
-            &sources,
-            &item("download", "下载已选择目标")?,
-            &item("activate", "确认切换已准备目标")?,
-            &item("recover", "重新打开或同版恢复")?,
+            &separator()?,
+            &item("download", "下载更新")?,
+            &item("activate", "安装已下载的更新…")?,
+            &separator()?,
+            &advanced,
         ],
     )?;
-    Menu::with_items(
+    let file = Submenu::with_id_and_items(
         app,
+        "file",
+        "文件(&F)",
+        true,
         &[
-            &updates,
-            &item("about", "关于")?,
-            &item("show", "显示主窗口")?,
-            &item("exit", "正常退出")?,
-            &item("force-stop", "强制停止运行")?,
-            &item("force-exit", "强制退出 DSH Desktop")?,
+            &item("hide", "关闭窗口")?,
+            &separator()?,
+            &item("exit", "退出")?,
         ],
-    )
+    )?;
+    let view = Submenu::with_id_and_items(
+        app,
+        "view",
+        "视图(&V)",
+        true,
+        &[
+            &item("show", "显示主窗口")?,
+            &MenuItem::with_id(app, "fullscreen", "全屏", true, Some("F11"))?,
+        ],
+    )?;
+    let help = Submenu::with_id_and_items(
+        app,
+        "help",
+        "帮助(&H)",
+        true,
+        &[
+            &item("check", "检查更新…")?,
+            &updates,
+            &separator()?,
+            &item("about", "关于 DSH Desktop…")?,
+        ],
+    )?;
+    Menu::with_items(app, &[&file, &view, &help])
 }
 
 #[allow(clippy::too_many_lines)]
 fn dispatch(app: &AppHandle, id: &str) {
     match id {
         "show" => show_window(app),
+        "hide" => {
+            if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+                let _ = window.hide();
+            }
+        }
+        "fullscreen" => {
+            if let Some(window) = app.get_webview_window(WINDOW_LABEL)
+                && let Ok(fullscreen) = window.is_fullscreen()
+            {
+                let _ = window.set_fullscreen(!fullscreen);
+            }
+        }
         "info" | "about" => {
             let state = app.state::<HostState>().inner().clone();
-            thread::spawn(move || match information(&state) {
-                Ok(text) => dialogs::info("DSH Desktop · 版本与更新", text),
+            let diagnostic = id == "info";
+            thread::spawn(move || match information(&state, diagnostic) {
+                Ok(text) => dialogs::info(
+                    if diagnostic {
+                        "诊断信息"
+                    } else {
+                        "关于 DSH Desktop"
+                    },
+                    text,
+                ),
                 Err(error) => dialogs::error("DSH Desktop", format!("无法读取版本：{error:#}")),
             });
         }
@@ -168,12 +225,10 @@ fn dispatch(app: &AppHandle, id: &str) {
             let manager = manager()?;
             let confirmed = manager.read_staged()?.context("没有已准备目标，请先下载")?;
             if !dialogs::confirm(
-                "确认具体目标",
+                "安装更新",
                 format!(
-                    "切换到 Harness {}（{}，副本 {}）？\n确认仅对该目标有效。",
-                    confirmed.version_label(),
-                    confirmed.source.label(),
-                    confirmed.location
+                    "安装 DeepSeek Harness {}？\n更新需要重新启动应用。",
+                    confirmed.version_label()
                 ),
             ) {
                 return Ok(());
@@ -204,7 +259,22 @@ fn dispatch(app: &AppHandle, id: &str) {
             start_and_present(app, state, &runtime)
         }),
         "exit" => operation(app, |app, state| {
-            require_no_run(state)?;
+            if require_no_run(state).is_err() {
+                if !dialogs::confirm(
+                    "退出 DSH Desktop",
+                    "无法确认所有任务已经完成。\n\n仍要退出吗？强制退出可能中断任务，未保存的内容可能丢失。",
+                ) {
+                    return Ok(());
+                }
+                let mut slot = state
+                    .process
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("暂时无法停止应用，请稍后重试"))?;
+                if let Some(process) = slot.as_mut() {
+                    process.kill()?;
+                }
+                *slot = None;
+            }
             state.exiting.store(true, Ordering::SeqCst);
             app.exit(0);
             Ok(())
@@ -400,7 +470,21 @@ fn render_versions(state: &HostState, check: &CheckResult) -> Result<()> {
     Ok(())
 }
 
-fn information(state: &HostState) -> Result<String> {
+fn information(state: &HostState, diagnostic: bool) -> Result<String> {
+    if !diagnostic {
+        let running = state
+            .process
+            .lock()
+            .map_err(|_| anyhow::anyhow!("暂时无法读取版本"))?
+            .as_ref()
+            .map_or_else(
+                || "未运行".into(),
+                |process| process.runtime.copy.version_label().to_owned(),
+            );
+        return Ok(format!(
+            "DSH Desktop {LAUNCHER_VERSION}\n\nDeepSeek Harness：{running}\n\nDeepSeek Harness 的非官方桌面客户端。\n检查新版本，请选择“帮助 → 检查更新”。"
+        ));
+    }
     let manager = manager()?;
     let settings = manager.read_settings()?;
     let running = state
