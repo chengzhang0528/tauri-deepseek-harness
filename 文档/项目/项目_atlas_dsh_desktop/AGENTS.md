@@ -16,6 +16,7 @@ Depends On:
 
 - 产品名、平台、安装形态、分发模式、OSS 前缀和用户可见行为：`ProductContract.md`。
 - Tauri、官方依赖接入、本机副本、进程生命周期、更新、状态与实施门禁：`CurrentDesign.md`。
+- 本机安装、启动与恢复命令：`Runbook.md`。
 - 安装器、更新或发布技术工作命中 `client-application-development`；实现受管运行时能力同时命中 `develop-managed-client-capability`。
 
 ## 项目门禁

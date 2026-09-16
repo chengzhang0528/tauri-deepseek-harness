@@ -30,6 +30,7 @@ Depends On:
 - `项目/项目_atlas_dsh_desktop/AGENTS.md` -> `AgentEntry`
 - `项目/项目_atlas_dsh_desktop/ProductContract.md` -> `ProductContract`
 - `项目/项目_atlas_dsh_desktop/CurrentDesign.md` -> `CurrentDesign`
+- `项目/项目_atlas_dsh_desktop/Runbook.md` -> `Runbook`
 
 首次出现有可靠依据的未承诺结果时，在本文件同一改动中声明 `WORK_CANDIDATES.md -> WorkInventory`；首次出现实际工作空间级设计、决策、运行或活动事实时，也在同一改动中声明其精确位置与 Kind。
 

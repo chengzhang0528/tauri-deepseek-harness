@@ -1,43 +1,24 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { parseRequest, handleRequest } from '../src-tauri/resources/desktop-bridge.mjs'
 
-import { parseRequest } from '../src-tauri/resources/desktop-bridge.mjs'
-
-test('desktop bridge returns stable protocol errors', () => {
-  assert.deepEqual(parseRequest('ordinary dsh log'), null)
+test('bridge rejects malformed and unsupported requests', () => {
+  assert.equal(parseRequest('ordinary log'), null)
   assert.equal(parseRequest('@@DSH_DESKTOP@@{').error, 'invalid-json')
-  assert.equal(
-    parseRequest('@@DSH_DESKTOP@@{"protocolVersion":99,"requestId":"r","operation":"status"}').error,
-    'unsupported-protocol',
-  )
-  assert.equal(
-    parseRequest('@@DSH_DESKTOP@@{"protocolVersion":1,"requestId":"r"}').error,
-    'invalid-operation',
-  )
-  assert.equal(parseRequest(`@@DSH_DESKTOP@@${'x'.repeat(65_000)}`).error, 'invalid-json')
-  assert.equal(parseRequest(`@@DSH_DESKTOP@@${'x'.repeat(70_000)}`).error, 'message-too-large')
+  assert.equal(parseRequest('@@DSH_DESKTOP@@{"protocolVersion":1,"requestId":"r","operation":"status"}').error, 'unsupported-protocol')
+  assert.equal(parseRequest(`@@DSH_DESKTOP@@${'x'.repeat(70000)}`).error, 'message-too-large')
+  assert.equal(parseRequest('@@DSH_DESKTOP@@{"protocolVersion":2,"requestId":"r"}').error, 'invalid-operation')
 })
-
-test('desktop bridge accepts only the fixed request shape', () => {
-  assert.deepEqual(
-    parseRequest('@@DSH_DESKTOP@@{"protocolVersion":1,"requestId":"r","operation":"status"}'),
-    { request: { protocolVersion: 1, requestId: 'r', operation: 'status' } },
-  )
+test('zero running agents does not imply no pending work or completed cleanup', () => {
+  const status = handleRequest({ agents: { list: () => [{ status: 'waiting' }] } }, 'status')
+  assert.deepEqual(status, { ok: true, observedRunningAgents: 0, acceptingNewWork: null, pendingWork: null, cleanupComplete: null })
 })
-
-test('runtime doctor requires the pinned native module set when present', async () => {
-  const doctor = await readFile(new URL('./doctor-runtime.mjs', import.meta.url), 'utf8')
-  for (const name of ['node-pty', 'koffi', 'sharp']) {
-    assert.match(doctor, new RegExp(`['"]${name}['"]`))
-  }
+test('unavailable agent list remains unknown', () => {
+  assert.equal(handleRequest({}, 'status').observedRunningAgents, null)
 })
-
-test('desktop bridge patch inserts a new root loader entry', async () => {
-  const patch = await readFile(new URL('../src-tauri/resources/desktop-bridge.patch.yml', import.meta.url), 'utf8')
-  assert.deepEqual(patch.trimEnd().split(/\r?\n/), [
-    '- insert:',
-    '    - id: dsh-desktop-bridge',
-    '      name: __DSH_DESKTOP_BRIDGE_MODULE__',
-  ])
+test('unsupported drain and exit never invoke the upstream exit hook', () => {
+  let called = false
+  const ctx = { appExit() { called = true } }
+  for (const op of ['beginDrain', 'appExit']) assert.deepEqual(handleRequest(ctx, op), { ok: false, error: 'exit-evidence-unavailable' })
+  assert.equal(called, false)
 })

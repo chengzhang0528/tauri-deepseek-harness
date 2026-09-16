@@ -12,23 +12,24 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::job::ProcessJob;
+use crate::runtime::PreparedRuntime;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_LOG_LINE: usize = 16 * 1024;
 const MAX_BRIDGE_LINE: usize = 64 * 1024;
 const MAX_READY_PAGE_BYTES: usize = 2 * 1024 * 1024;
 const BRIDGE_TIMEOUT: Duration = Duration::from_secs(2);
-const APP_EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 const SENTINEL: &str = "@@DSH_DESKTOP@@";
-const PROTOCOL_VERSION: u32 = 1;
-const BRIDGE_PATCH_FILE: &str = "desktop-bridge.patch.yml";
+const PROTOCOL_VERSION: u32 = 2;
 
 type BridgeResponses = Arc<(Mutex<VecDeque<BridgeResponse>>, Condvar)>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct BridgeStatus {
-    pub accepting_new_work: bool,
-    pub active_work: u64,
+    pub accepting_new_work: Option<bool>,
+    pub pending_work: Option<u64>,
+    pub cleanup_complete: Option<bool>,
+    pub observed_running_agents: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,7 +39,9 @@ struct BridgeResponse {
     request_id: String,
     ok: bool,
     accepting_new_work: Option<bool>,
-    active_work: Option<u64>,
+    pending_work: Option<u64>,
+    cleanup_complete: Option<bool>,
+    observed_running_agents: Option<u64>,
     error: Option<String>,
 }
 
@@ -47,42 +50,35 @@ pub struct HarnessProcess {
     child: Child,
     stdin: Arc<Mutex<std::process::ChildStdin>>,
     responses: BridgeResponses,
-    _job: ProcessJob,
+    job: ProcessJob,
     pub url: Url,
+    pub runtime: PreparedRuntime,
 }
 
 impl HarnessProcess {
-    pub fn start(root: &Path) -> Result<Self> {
+    pub fn start(runtime: &PreparedRuntime) -> Result<Self> {
+        let root = &runtime.root;
         let node = find_executable(root, "node.exe")?;
         let cli = find_dsh_cli(root)?;
-        let bridge_patch = find_bridge_patch(root)?;
         let mut command = Command::new(node);
         command
             .arg(cli)
             .arg("web")
             .arg("--patch")
-            .arg(bridge_patch)
+            .arg(&runtime.bridge_patch)
             .arg("--port")
             .arg("0")
             .arg("--no-open")
             .current_dir(root)
-            .env("DSH_HOME", default_dsh_home())
+            .env("DSH_HOME", &runtime.data_home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        hide_console(&mut command);
-
-        let mut child = command.spawn().context("cannot start dsh web")?;
+        let (mut child, job) =
+            ProcessJob::spawn(&mut command).context("cannot start managed dsh web")?;
         let stdin = Arc::new(Mutex::new(
             child.stdin.take().context("dsh stdin unavailable")?,
         ));
-        let job = match ProcessJob::attach(&child) {
-            Ok(job) => job,
-            Err(error) => {
-                let _ = child.kill();
-                return Err(error).context("cannot attach dsh process tree to Job Object");
-            }
-        };
         let stdout = child.stdout.take().context("dsh stdout unavailable")?;
         let stderr = child.stderr.take().context("dsh stderr unavailable")?;
         let lines = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -97,8 +93,9 @@ impl HarnessProcess {
             child,
             stdin,
             responses,
-            _job: job,
+            job,
             url,
+            runtime: runtime.clone(),
         };
         process.status()?;
         Ok(process)
@@ -109,21 +106,32 @@ impl HarnessProcess {
         bridge_status(&response)
     }
 
-    pub fn begin_drain(&self) -> Result<BridgeStatus> {
-        let response = self.request("beginDrain", BRIDGE_TIMEOUT)?;
-        bridge_status(&response)
-    }
-
-    pub fn app_exit(&self) -> Result<()> {
-        self.request("appExit", APP_EXIT_TIMEOUT).map(|_| ())
-    }
-
     pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
         self.child.try_wait().context("cannot inspect dsh process")
     }
 
     pub fn kill(&mut self) -> Result<()> {
-        self.child.kill().context("cannot terminate dsh process")
+        self.job
+            .terminate()
+            .context("cannot terminate owned process tree")?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if self.tree_ended()? {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        bail!("owned process tree termination is not yet confirmed")
+    }
+
+    pub fn tree_ended(&mut self) -> Result<bool> {
+        let _ = self
+            .child
+            .try_wait()
+            .context("cannot observe root process")?;
+        self.job
+            .is_empty()
+            .context("cannot observe owned process tree")
     }
 
     fn request(&self, operation: &str, timeout: Duration) -> Result<BridgeResponse> {
@@ -187,13 +195,15 @@ impl HarnessProcess {
 }
 
 fn bridge_status(response: &BridgeResponse) -> Result<BridgeStatus> {
+    ensure!(
+        response.protocol_version == PROTOCOL_VERSION && response.ok,
+        "bridge evidence unavailable"
+    );
     Ok(BridgeStatus {
-        accepting_new_work: response
-            .accepting_new_work
-            .context("desktop bridge response omitted acceptingNewWork")?,
-        active_work: response
-            .active_work
-            .context("desktop bridge response omitted activeWork")?,
+        accepting_new_work: response.accepting_new_work,
+        pending_work: response.pending_work,
+        cleanup_complete: response.cleanup_complete,
+        observed_running_agents: response.observed_running_agents,
     })
 }
 
@@ -201,6 +211,7 @@ fn wait_for_ready(lines: &Arc<Mutex<Vec<String>>>) -> Result<Url> {
     let deadline = Instant::now() + READY_TIMEOUT;
     let client = Client::builder()
         .timeout(Duration::from_secs(2))
+        .cookie_store(true)
         .build()
         .context("cannot create readiness client")?;
     let mut inspected = 0usize;
@@ -210,7 +221,7 @@ fn wait_for_ready(lines: &Arc<Mutex<Vec<String>>>) -> Result<Url> {
             .lock()
             .map_err(|_| anyhow::anyhow!("dsh log lock poisoned"))?
             .clone();
-        collect_readiness_candidates(&snapshot, &mut inspected, &mut candidates)?;
+        collect_readiness_candidates(&snapshot, &mut inspected, &mut candidates);
         for url in &candidates {
             if harness_page_ready(&client, url)? {
                 return Ok(url.clone());
@@ -225,17 +236,15 @@ fn collect_readiness_candidates(
     lines: &[String],
     inspected: &mut usize,
     candidates: &mut Vec<Url>,
-) -> Result<()> {
+) {
     for line in lines.iter().skip(*inspected) {
-        if let Some(port) = extract_port(line) {
-            let url = Url::parse(&format!("http://127.0.0.1:{port}/"))?;
-            if !candidates.contains(&url) {
-                candidates.push(url);
-            }
+        if let Some(url) = extract_launch_url(line)
+            && !candidates.contains(&url)
+        {
+            candidates.push(url);
         }
     }
     *inspected = lines.len();
-    Ok(())
 }
 
 fn harness_page_ready(client: &Client, url: &Url) -> Result<bool> {
@@ -255,9 +264,23 @@ fn harness_page_ready(client: &Client, url: &Url) -> Result<bool> {
         "dsh readiness page exceeds the client maximum size"
     );
     let body = String::from_utf8_lossy(&body);
-    Ok(body.contains("window.__DSH_BOOT__"))
+    Ok(body.contains("__DSH_BOOT__"))
 }
 
+fn extract_launch_url(line: &str) -> Option<Url> {
+    // Preserve the Harness-owned login query. Never print or persist this URL.
+    let start = ["http://127.0.0.1:", "http://localhost:"]
+        .iter()
+        .filter_map(|marker| line.find(marker))
+        .min()?;
+    let end = line[start..]
+        .find(|character: char| character.is_whitespace() || character == '\u{1b}')
+        .map_or(line.len(), |length| start + length);
+    let url = Url::parse(&line[start..end]).ok()?;
+    (url.port()? != 0).then_some(url)
+}
+
+#[cfg(test)]
 fn extract_port(line: &str) -> Option<u16> {
     for marker in [
         "http://127.0.0.1:",
@@ -383,32 +406,6 @@ fn find_dsh_cli(root: &Path) -> Result<PathBuf> {
     bail!("dsh CLI entry is missing from runtime")
 }
 
-fn find_bridge_patch(root: &Path) -> Result<PathBuf> {
-    let candidate = root.join(BRIDGE_PATCH_FILE);
-    ensure!(
-        candidate.is_file(),
-        "desktop bridge patch is missing from runtime"
-    );
-    Ok(candidate)
-}
-
-fn default_dsh_home() -> PathBuf {
-    std::env::var_os("APPDATA").map_or_else(
-        || PathBuf::from("dsh-home"),
-        |value| PathBuf::from(value).join("DSH Desktop").join("dsh-home"),
-    )
-}
-
-fn hide_console(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
-    #[cfg(not(windows))]
-    let _ = command;
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::BufReader;
@@ -417,6 +414,53 @@ mod tests {
     use super::{
         BridgeResponse, PROTOCOL_VERSION, bridge_status, collect_readiness_candidates, extract_port,
     };
+
+    #[test]
+    fn preserves_the_official_browser_auth_query() {
+        let url =
+            super::extract_launch_url("Listening http://127.0.0.1:43123/?token=example").unwrap();
+        assert_eq!(url.query(), Some("token=example"));
+    }
+
+    #[test]
+    #[ignore = "requires an explicitly supplied real official installation"]
+    fn official_runtime_smoke() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("DSH_TEST_RUNTIME").expect("explicit runtime directory"),
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("desktop-bridge.mjs");
+        std::fs::write(&script, include_bytes!("../resources/desktop-bridge.mjs")).unwrap();
+        let patch = temp.path().join("bridge.yml");
+        let script_url = url::Url::from_file_path(script).unwrap();
+        std::fs::write(
+            &patch,
+            include_str!("../resources/desktop-bridge.patch.yml")
+                .replace("__DSH_DESKTOP_BRIDGE_MODULE__", script_url.as_str()),
+        )
+        .unwrap();
+        let runtime = crate::runtime::PreparedRuntime {
+            root,
+            bridge_patch: patch,
+            data_home: temp.path().join("home"),
+            copy: crate::runtime::RuntimeCopy {
+                schema: 2,
+                location: "probe".into(),
+                release: "0.1.6-alpha.1".into(),
+                harness_version: Some("0.1.6-alpha.1".into()),
+                source: crate::runtime::RuntimeSource::Npm,
+                publisher: "@deepseek-ai/dsh".into(),
+                registry: None,
+            },
+        };
+        let mut process = super::HarnessProcess::start(&runtime).unwrap();
+        let status = process.status().unwrap();
+        assert_eq!(status.pending_work, None);
+        assert_eq!(status.cleanup_complete, None);
+        assert!(!process.tree_ended().unwrap());
+        process.kill().unwrap();
+        assert!(process.tree_ended().unwrap());
+    }
 
     #[test]
     fn extracts_only_nonzero_local_ports() {
@@ -435,12 +479,14 @@ mod tests {
             request_id: "request".into(),
             ok: true,
             accepting_new_work: Some(false),
-            active_work: Some(2),
+            pending_work: Some(2),
+            cleanup_complete: Some(false),
+            observed_running_agents: Some(1),
             error: None,
         })
         .expect("status");
-        assert!(!status.accepting_new_work);
-        assert_eq!(status.active_work, 2);
+        assert_eq!(status.accepting_new_work, Some(false));
+        assert_eq!(status.pending_work, Some(2));
     }
 
     #[test]
@@ -462,10 +508,10 @@ mod tests {
         let first = vec!["dsh web: http://127.0.0.1:43123".to_owned()];
         let mut inspected = 0;
         let mut candidates = Vec::new();
-        collect_readiness_candidates(&first, &mut inspected, &mut candidates).expect("candidate");
+        collect_readiness_candidates(&first, &mut inspected, &mut candidates);
         assert_eq!(candidates.len(), 1);
 
-        collect_readiness_candidates(&first, &mut inspected, &mut candidates).expect("retry");
+        collect_readiness_candidates(&first, &mut inspected, &mut candidates);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].as_str(), "http://127.0.0.1:43123/");
     }

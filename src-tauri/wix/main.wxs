@@ -188,7 +188,7 @@
 
         <InstallExecuteSequence>
             <Custom Action="LaunchApplication" After="InstallFinalize">AUTOLAUNCHAPP = 1 AND NOT Installed</Custom>
-            <Custom Action="CleanupInstallerOwnedState" Before="RemoveFiles">REMOVE = "ALL" AND NOT WIX_UPGRADE_DETECTED</Custom>
+            <Custom Action="CleanupInstallerOwnedState" Before="RemoveFiles">REMOVE = "ALL" AND NOT UPGRADINGPRODUCTCODE AND NOT WIX_UPGRADE_DETECTED</Custom>
         </InstallExecuteSequence>
         <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLDIR]" After="CostFinalize" />
     </Product>
