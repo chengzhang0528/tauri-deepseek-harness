@@ -2,168 +2,150 @@
 
 Status: Active
 Kind: CurrentDesign
-Scope: atlas-dsh-desktop / Windows x64 桌面壳与私有运行时
+Scope: atlas-dsh-desktop / Windows x64 桌面宿主与私有运行时
 Owner: 项目维护者
-Updated: 2026-08-21
+Updated: 2026-09-16
 Depends On:
 - ProductContract.md
 
 ## 评审结论
 
-采用稳定的 Tauri 2 Native Host/Launcher 管理版本化私有 Node 24 与固定 DeepSeek Harness 运行时闭包。联网薄安装器默认合并本地已验证 runtime、配置的 OSS catalog/bootstrap 和授权 npm registry 闭包，选择最高兼容版本；不在用户机器执行 `npm install @latest`，不复用系统 Node，不固定 3080 端口。已批准方向完整，可进入编码；本设计不授权独立 SystemTest 或正式发布。
+采用现有 Tauri 2 Native Host、当前用户薄 MSI、应用私有运行时和独立 DSH_HOME。官方依赖直接使用官方发行与安装方式；宿主管理本机副本、受管运行、版本呈现、更新确认和恢复，不再承担官方内容认证与重发布前置责任。产品要求及领域增量采纳范围由 [ProductContract](ProductContract.md) 唯一持有。
 
-| 结果/决策 | 当前支持 | 必需变化 | 用户表面 | 所有者 | 持久化影响 | 证据 | 开放决策 |
-|---|---|---|---|---|---|---|---|
-| 桌面宿主 | 工作区无产品源码；参考实现证明 Tauri 壳可行 | 建立无前端 bundle 的 Tauri 2 原生宿主、托盘、单实例和隐藏后台进程 | runtime ready 后只显示完整 dsh Web UI | Native Host | 只保存原生客户端偏好；不拥有业务数据 | 上游已有 `dsh web`；参考项目 `a8f32fdb` | 无 |
-| 私有运行时 | 上游要求 Node `^22.19.0 || >=24.0.0` | 固定 Node 24、dsh、pnpm、原生模块和 ripgrep 的 win-x64 闭包；local/OSS/npm 候选统一做 digest、closure 和 doctor 校验 | 原生 TaskDialog、托盘与系统通知 | Launcher | 新增版本化 runtime/cache/staging 与 client-settings | Windows 测量闭包下限超过 282 MiB | 无 |
-| 服务启动 | 上游支持随机端口和 `--no-open` | 解析 readiness，验证 Harness bootstrap 后才创建外部 URL WebView | 完整 dsh 工作台，无桌面端页面 | Process Supervisor | 无业务持久化变化 | 上游 `dsh web --port 0 --no-open` | 无 |
-| 退出与托盘 | 参考实现只会 `taskkill /T /F` | Job Object、桌面桥、活动任务 drain、原生确认和明确强退 | 托盘与原生 TaskDialog | Native Host + Bridge | 只保存客户端偏好 | Windows 不能可靠向隐藏进程投递上游依赖的 `SIGTERM` | 无 |
-| 更新与恢复 | 当前无客户端更新实现 | 默认合并 local/OSS/npm 候选；按设置固定来源/版本；manifest/完整闭包下载、校验、doctor、暂存、确认激活和 forward repair | 原生托盘命令、TaskDialog 与系统通知 | Launcher + Native Host | 新增 current/staged 指针和 client-settings；用户数据不迁入 | 上游 developer preview 不保证数据向后兼容 | 无 |
-| 分发 | 当前无本项目制品 | 匹配版本 Tag 的 GitHub Actions 先构建 MSI 和受检 runtime 闭包，将 ZIP/manifest 回读后提交到 `atlas-dsh-desktop/` OSS Bootstrap，最后发布同名 GitHub Release MSI | Setup、修复、卸载 | Installer + Release tooling | 安装注册与用户数据分离 | 已批准薄安装器、自用分发、GitHub Release 下载和唯一 OSS 前缀 | 无 |
+本设计描述已采纳目标及与源码的差异，不声明实现完成。源码已有宿主、更新器、bridge 和构建工具；旧闭包校验路径仍在代码中，退出事实仍有缺口。官方私有目录安装的 Windows 可运行性和完整退出接口是对应实施步骤的前置证据，不阻止版本展示、准备反馈等独立改动。
+
+| 结果/决策 | 当前支持 | 必需变化 | 用户表面 | 所有者 | 持久化影响 | 证据 / 实施条件 |
+|---|---|---|---|---|---|---|
+| 官方依赖接入 | runtime.rs 要求 dshDesktopRuntime、manifest、digest 和 doctor | 官方精确版本与安装方式取代自有闭包认证门槛；保留本机准备和启动结果 | 原生准备进度、失败与重试 | RuntimeManager；内容归发布者 | current/staged 格式调整 | 官方 npm 入口已确认；私有目录安装须定向验证 |
+| 当前版本可见 | host.rs 固定标题；勾选来自设置；PreparedRuntime 仅带 root | 本轮运行保存启动发行和 Harness 版本引用，各入口读取同一事实 | 标题、窗口原生菜单与托盘 | Native Host | 运行信息驻内存，复用发行引用 | 不由 current、staged 或选择标记推导运行版本 |
+| 更新与反馈 | 已有启动后/每六小时检查、自动暂存、手动操作 | 来源覆盖、暂存与运行分别表达，确认绑定具体目标 | 检查、准备、等待、启动与失败可辨 | RuntimeManager + Native Host | 复用设置和双指针；检查与确认不落库 | 自动止于准备；首次准备与已有版本升级分开 |
+| 正常退出 | bridge 仅有 running 数和局部 draining；退出回执早于 appExit | 消费完整工作、入口关闭和收尾证据；缺失按未知 | 原生等待、缺口说明、明确强退 | Harness 生产事实，宿主消费 | 无业务镜像 | U1 未解决，现有 bridge 不证明完整退出保证 |
+| 异常恢复 | try_wait 只观察根进程；Job Object 负责回收 | 补充全树结束观察；结束与正常收尾分别判断 | 同版恢复、前向修复、窗口重开 | ProcessJob / HarnessProcess / Native Host | 复用 repair，无运行历史库 | OS 树结束证据须验证，不自动回滚数据 |
 
 ## 目标架构
 
 ```text
-Windows current-user MSI
-  -> stable Tauri Native Host / Launcher
-       -> Bootstrap + manifest client
-       -> Runtime manager (download / verify / unpack / doctor / activate)
-       -> Process supervisor (hidden process + Windows Job Object)
-       -> native TaskDialog / tray / system notification
-       -> after verified ready: one WebView (exact dsh runtime loopback URL only)
-  -> versioned private runtime
-       -> Node.js 24 win-x64
-       -> pinned @deepseek-ai/dsh closure
-       -> pinned pnpm + native modules + ripgrep + third-party notices
-       -> minimal Cordis desktop bridge
+当前用户 MSI -> Tauri Native Host
+  -> 官方发行发现与私有副本准备 -> current / staged
+  -> 本轮受管运行 -> 私有 Node + dsh web + 最小桌面 bridge
+  -> Windows Job Object / 运行与退出观察
+  -> 窗口标题、原生菜单、TaskDialog、托盘、通知
+  -> 就绪后唯一 WebView，直接呈现 dsh 页面
+独立 DSH_HOME -> Harness 拥有业务配置、会话和结果
 ```
 
-项目不包含 frontend bundle、HTML/CSS/JavaScript 页面入口或前端框架。Tauri 配置使用 `windows: []` 和 `withGlobalTauri: false`；启动期间不创建 WebView。Harness 身份验证 ready 后，Rust 后端通过 `WebviewWindowBuilder` 动态创建唯一窗口并将 `WebviewUrl::External` 指向本次 supervisor 验证的精确 dsh 回环 URL。
+现有模块继续复用：`runtime.rs` 管发行发现、准备及指针；`process.rs` 管一次启动及 bridge；`job.rs` 管所属进程集合；`host.rs` 管原生交互和调度；`dialogs.rs` 承载原生反馈。无需新增更新服务、规则引擎、发行数据库或插件市场。
 
-该远程页面不配置 Tauri capability、IPC 或 `dangerousRemoteDomainIpcAccess`，不持有 shell、文件系统、进程、下载或更新权限。桌面端不注入 preload、初始化脚本、DOM、CSS、更新控件或诊断组件。WebView 只承载 dsh origin；离开该 origin 的普通外部 HTTP(S) 链接交给系统浏览器，不在应用层新增 TLS、证书、协议、Origin/Host、重定向或网络来源策略。
-
-| 生命周期场景 | 唯一可见表面 |
-|---|---|
-| 安装、修复、卸载 | Windows Installer / WiX 原生界面 |
-| 首启下载、校验、解压、doctor | Rust 调用的原生 TaskDialog；必要时系统通知 |
-| 正常工作 | `dsh web` 返回的完整页面 |
-| 检查、暂存、激活更新 | 原生托盘菜单、TaskDialog 与系统通知 |
-| 退出 drain、强退确认、runtime 故障 | 原生 TaskDialog；失效 WebView 隐藏或销毁 |
-
-任何场景都不得使用 DSH Desktop 自有 Web 页面兜底。runtime 恢复并重新通过身份验证后，重新创建 WebView 或将现有 WebView 导航到新的 dsh URL。
+保持 `windows: []`、`withGlobalTauri: false`，启动时不创建 WebView；受管运行就绪后加载其实际回环 URL。远程页面不获得 Tauri IPC、shell、文件系统或更新权限。宿主不注入 DOM、样式、脚本或业务控件。窗口原生菜单复用托盘动作，不另建 Web 页面。普通外部 HTTP(S) 链接沿用系统浏览器入口。应用层不新增 TLS、证书、Origin/Host、重定向或网络来源策略。
 
 ## 制品与版本契约
 
-Installer、Launcher 与 runtime 分别版本化。未带 Tag 的本地构建以 `version.json` 作为 Installer/Launcher 开发版本唯一所有者；版本 Tag `vX.Y.Z` 是该次发布构建的 MSI/Launcher 版本输入。runtime manifest 的 `release` 与 `minimumLauncher` 是两个独立字段：`minimumLauncher` 表示支持该 runtime bridge/protocol 的最低 Launcher 版本，`build-runtime` 默认读取 `version.json` 的稳定 Launcher 版本，发布流程不得按 runtime tag 自动提高该下限。只有 bridge、协议或 manifest schema 发生不兼容变化时，才显式提高 `minimumLauncher` 并同步发布新 MSI。release manifest 作为 runtime 组件版本唯一所有者；普通 runtime 更新不得重建或改写稳定 Installer 版本。
+Installer/Launcher 的开发版本仍由 `version.json` 持有，版本 Tag `vX.Y.Z` 是对应 MSI/Launcher 发布构建输入。Harness 版本取官方发行引用，不能用 Launcher 版本或旧 runtime release 号代替；只有真实发行明确声明的适用条件才作为兼容条件，不要求官方补交本产品 manifest 或 minimumLauncher。
 
-```text
-scheme: https
-host: shared-public-assets.oss-cn-beijing.aliyuncs.com
-root: atlas-dsh-desktop/
-  bootstrap/windows-x64.json
-  installers/<installer-version>/windows-x64/<installer>.msi
-  releases/<release-version>/windows-x64/manifest.json
-  releases/<release-version>/windows-x64/<component>.zip
-  third-party/<component>/windows-x64/<sha256>/<upstream-file>
-```
+发行身份由发布方及发行标识限定；副本由安装上下文与受管位置限定。同版本号不同来源不自行认定内容等价，运行保存启动发行，后续指针改变不重写该事实。准备完成只表示获取/安装成功，不表示已运行或业务健康。
 
-Bootstrap 是唯一可变 OSS 入口；它保留顶层 `release`、`minimumLauncher` 和 `manifest` 作为旧 Launcher 的兼容回退，并可指向一个 immutable release catalog。Catalog 对象按 `catalog/<catalog-release>/windows-x64/catalog.json` 发布，包含多个 runtime 候选及各自的 `release`、`minimumLauncher` 和 manifest AssetRef；客户端按本地 Launcher 版本过滤，跳过低于当前 runtime 的候选，选择最高兼容版本，普通 runtime 更新不要求重装 Launcher。Catalog 自身通过 Bootstrap AssetRef 校验，发布后不得覆盖。对象键不可由文件名猜测；运行期 `auto` 可在明确配置的 OSS 之外复用本地已验证闭包和带完整 closure descriptor 的授权 npm 包，不引入隐式 registry/GitHub 回退。
+官方发布位置和安装方式以实际发布者为准。2026-09-16 核对的 [Harness 官方入口](https://github.com/deepseek-ai/deepseek-harness#run-from-npm)提供 npm 包运行方式；[npm install 官方说明](https://docs.npmjs.com/cli/v11/commands/npm-install/)支持安装具体包版本。这支持官方包管理器方向，但不证明目标 Windows 机器上的原生依赖无需编译或完整退出接口可用。
 
-所有组件在冻结候选前于 Windows x64 构建：`node-pty`、`koffi`、`sharp` 等原生依赖必须在目标 Node ABI 上加载通过；ripgrep 执行 `--version`；dsh 执行 `--version` 并完成一次随机端口启动 doctor。用户机器不运行编译器和 `npm install`；npm 运行期候选必须是带完整 closure descriptor、固定 sha512 和可通过同一 doctor 的可解包闭包。
+拟接入方式是在未被运行占用的私有目录，使用私有 Node 的 npm 安装已解析的精确 Harness 版本。实施前核对目标 Node/npm、包入口、安装作用域和脚本行为；不修改系统 PATH、全局 registry 或 CLI home，不通过浮动版本启动原地更换运行内容。官方工具自身校验照常执行，宿主不复制摘要、闭包或 doctor 认证。Node 等依赖沿用实际官方发布方式；上游没有要求的工具不因旧闭包包含它就继续捆绑。
 
-`src-tauri/resources/runtime-versions.windows-x64.json` 是 Windows x64 Node、dsh、pnpm、ripgrep 上游版本、对象 URL 和适用 SHA-256 的唯一所有者；`runtime/package-lock.json` 固定构建机 dsh 的完整 npm 依赖图。`prepare:runtime` 仅在构建机执行：下载并校验 Node/ripgrep，使用 private Node 对锁文件执行 `npm ci`，再物化 bridge、doctor、许可证通知和版本元数据。用户安装后的 Launcher 不读取这些构建机输入，也不运行 npm install；它只接受已验证的 local/OSS/npm runtime closure。
-
-授权 npm 包必须在 packument 的版本条目中提供 `dshDesktopRuntime.manifest` 和单一 `packageRoot`（默认 `package`）；manifest 的 doctor 必须能在 tarball 解包后的完整 closure 上通过，`dist.integrity` 必须是 sha512。只有满足这些字段的版本才是候选；仅有 `@deepseek-ai/dsh` 版本号不会触发激活。
+旧 `runtime-versions.windows-x64.json`、`runtime/package-lock.json` 及脚本是现有构建机闭包输入，不是新方案的官方版本所有者。保留 GitHub Release MSI 分发责任；项目 OSS 的历史 ZIP、manifest、catalog 与 Bootstrap 是旧实现事实，不再作为官方更新前提。构建消费者未解耦前不得直接删除其输入或宣布发布链已切换。本方案不上传、删除远程对象或更换已发布包。
 
 ## 本地目录和状态
 
+继续使用 AppPaths 的现有用户目录：
+
 ```text
 %LOCALAPPDATA%\DSH Desktop\
-  launcher\                 # Installer/Launcher 拥有
-  runtimes\<release>\       # 不可变已验证组件树
-  cache\                    # 按 object key + digest 复用
-  staging\                  # 未激活候选
-  state\current.json        # 原子替换的当前 release 指针与已校验 manifest 快照
-  state\staged.json         # 已通过校验、等待用户确认的 release 指针
-  state\repair.json         # forward repair 的失败阶段、版本和脱敏错误
-  logs\                     # 有上限、轮转、脱敏的客户端诊断
-
+  launcher\          # Installer/Launcher
+  runtimes\          # 私有副本，运行占用时不原位重建
+  cache\             # 可复用准备输入
+  staging\           # 未激活的准备目录
+  state\current.json # 当前启用目标，不证明有存活运行
+  state\staged.json  # 已准备目标，不携带确认
+  state\repair.json  # 当前失败环节、目标与脱敏原因
+  logs\              # 有界、脱敏的宿主诊断
 %APPDATA%\DSH Desktop\
-  dsh-home\                 # 独立 DSH_HOME，Harness 拥有
-  client-settings.json      # 托盘、通知和更新偏好
+  dsh-home\          # Harness 拥有，卸载保留
+  client-settings.json
 ```
 
-API Key、Token、任务正文、审批理由和完整模型输出不得进入客户端日志或锁屏通知。客户端日志只保存组件、阶段、版本、退出码和脱敏错误；Harness 自身日志仍由 Harness 负责。卸载不删除 `%APPDATA%\DSH Desktop\dsh-home`。
+当前和暂存各至多一个，首次准备可均为空；副本记录预期发行、位置与本次准备结果，实际文件存在性另行观察。重建不沿用旧准备结果。保留安装内路径归属与写入边界，不因删除内容认证而允许越界或覆盖使用中的副本。
+
+API Key、Token、任务正文、审批理由和完整模型输出不得进入客户端日志或锁屏通知；宿主诊断仅保存组件、环节、版本、退出码和脱敏错误，Harness 自身日志由 Harness 负责。
+
+本轮运行记录启动副本、启动发行/Harness 版本、数据家目录、进程句柄、端点与就绪；PID 或端口不是运行身份。检查触发、来源覆盖、确认目标、呈现结果仅是当次状态，不新增持久任务、确认表或观察历史。来源设置 `auto` 不表示允许自动切换。
+
+### 迁移边界
+
+CurrentRelease/StagedRelease 当前依赖 manifest 和摘要快照，PreparedRuntime 仅有 root。消费者包括 RuntimeManager 的准备/激活、HostState 与版本菜单、HarnessProcess 启动，以及构建/发布脚本和定向测试。修改类型时一并核对，不能只改展示文案。
+
+推荐新指针具有可识别格式，并做一次性有界转换：旧记录中确定的安装内位置、发行与来源原样映射，无法确定的 Harness 版本显示未知，来源偏好不静默改写。副本可用性通过本机准备/启动结果回答，旧摘要/doctor 不升级为新准入条件。格式不可解析时保留原记录并提示修复，成功写入前不覆盖原指针。不建设多代永久兼容框架。
+
+旧固定版本可能是项目 runtime release，不能直接当 Harness npm 版本；无对应关系时明确反馈，由用户选有效官方目标，不擅自取最新版。旧 staged 不携带确认，转换不激活它。DSH_HOME 定位和业务内容不迁移、清空或回滚。该有界转换是推荐实现选择，需实际旧状态样例验证，不新增覆盖所有历史布局的兼容承诺。
 
 ## 启动与身份确认
 
-1. Launcher 获取进程级互斥锁，读取内置 seed Bootstrap，再尝试读取公共 Bootstrap。
-2. 读取 client-settings，默认探测本地 current/staged、公共 Bootstrap/catalog 和授权 npm packument；校验来源身份、Launcher 兼容性、当前 release 和完整闭包，选择最高候选。OSS 无 catalog 时使用顶层 manifest 回退；npm 仅接受带完整 closure descriptor 的版本。探测候选 release；缺失时下载至私有 `.part`，限制最大字节数并支持取消。
-3. 依次校验字节数、SHA-256、平台、架构和 provenance；用生产解包器拒绝绝对路径、`..`、重复项、链接和越界目标。
-4. 在全新 staging 中执行全部 doctor，成功后原子写入 `current.json`；失败只清理当前 staging。
-5. Rust 后端以 `CREATE_NO_WINDOW` 启动私有 Node，设置独立 `DSH_HOME`，保留 stdin 控制通道，并传入 `dsh web --port 0 --no-open`。
-6. 从结构化 bridge/readiness 消息取得实际端口，再请求首页并验证 `window.__DSH_BOOT__` 等 Harness 身份信号；TCP 连通本身不算 ready。
-7. 动态创建唯一 WebView 窗口并直接加载验证后的精确 origin，随后持续监控拥有的子进程；不得附着未知的 3080 或其他回环服务。
+1. 获取单实例所有权，解析安装路径、设置与双指针；不附着未知端口服务。
+2. 有可用 current 时启动 current，不因 staged 存在而切换；首次无 current 按官方目标准备并建立初始 current。发现既有失败线索则先走恢复分流。
+3. 私有 Node 在所选副本启动 `dsh web --port 0 --no-open`，设置独立 DSH_HOME，隐藏后台进程并建立本轮归属。
+4. 消费本轮端点、页面标记和 bridge 可用性观察；TCP 连通不等于就绪，就绪不等于完整退出能力或业务成功。
+5. 就绪后呈现唯一 WebView，以本轮 Harness 版本更新标题。窗口失败单独报告，不认定副本损坏；健康运行重开窗口不重复启动进程。
 
 ## 进程与退出生命周期
 
-每个 Harness 根进程启动即加入带 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object。Job Object 负责 Launcher 崩溃和最终强退的进程树回收，不作为日常退出手段。
+复用现有私有 stdin NDJSON、requestId、protocolVersion 和消息上限，不新增网络控制面或任意命令/路径输入。消费者是 process.rs、host.rs、desktop-bridge.mjs 与 scripts/desktop-bridge.test.mjs。
 
-最小 Cordis desktop bridge 是无持久状态的 managed-process lease 控制面，只接受 Launcher 私有 stdin 上的 NDJSON，请求和响应通过固定 sentinel 与普通 dsh 日志分离。每条消息最多 64 KiB，包含 `protocolVersion`、`requestId` 和固定 operation；响应只返回结构化状态或稳定错误，不接受路径、URL、命令、凭据或项目身份。
+当前 beginDrain 只设局部标记，activeWork 只数 running agent，appExit 先回复再调用 ctx.appExit。它们不证明全部入口关闭、审批/输入等待结束或 flush/dispose 完成。request_window_close 把读取失败映射为零的行为须改为未知并保留运行。
 
-| Operation | 语义 | 边界 |
-|---|---|---|
-| `status` | 返回 bridge 版本、是否接收新工作和活动工作数 | 只读、幂等、2 秒超时 |
-| `beginDrain` | 停止接收新工作并返回剩余活动数 | 幂等、可重复查询 |
-| `appExit` | 调用 Harness `ctx.appExit(0)`，等待 flush/dispose | 仅 drain 后调用、10 秒响应上限 |
+目标消费 Harness 权威汇总：实际入口接纳、完整待完成工作、退出收尾结果，并绑定本轮运行。先查选定发行的真实服务/插件接口及消费者；没有证据时保留未知，不靠新增字段名或 mock 声称实现。未知时不推进正常收尾/切换，明确强退仍可用。需要修改上游业务入口才能实现时，交由上游责任项目，不在宿主复制业务排空。
 
-未知 operation、协议不兼容、非法消息、超时和 bridge 不可用分别返回稳定错误；Rust 后端限制控制输出和 dsh stdout/stderr 的内存及落盘大小。bridge 不创建网络监听、文件、子进程或新的权限边界，其协议版本和 minimum Launcher 进入 release manifest。
+ProcessJob 已有 KILL_ON_JOB_CLOSE，但没有全树结束观察。需基于本轮持有的 Job Object 提供“仍有进程 / 已结束 / 未知”，验证根退出而子进程仍存活的情况。正常完成要求入口关闭、工作归零、收尾完成且全树结束；运行关联解除只依全树结束，旧收尾未知不使已死运行永久占位。强退也须观察到全树结束才报告完成。
 
-- 关闭窗口且存在活动任务：隐藏到托盘，不停止服务。
-- 关闭窗口且无活动任务：执行正常退出。
-- 用户显式退出：停止接收新任务，以原生 TaskDialog 显示等待状态，等待活动任务归零后请求 `appExit`。
-- drain 超时：原生 TaskDialog 提供“继续等待”和明确的“强制退出”；只有后者关闭 Job Object。
-- runtime 异常退出：隐藏或销毁 WebView，以原生 TaskDialog 显示诊断和恢复动作；短时间自动重试有界次数，但不得把端口被占用误判为恢复成功。
-
-bridge 只为桌面进程退出和更新激活提供活动工作数与 drain，不订阅、不解析也不镜像任务正文、模型配置、审批、提问、会话或其他业务事件。这些状态及其全部交互继续由 dsh 页面拥有。
+普通关窗有工作时隐藏到托盘，未知时保留运行并说明；明确无工作才进入正常退出。显式退出或已确认更新才请求排空，既有工作及必要输入仍可完成。超时提供继续等待和明确强退，不自动杀进程。保留 Job Object 在宿主崩溃时的回收职责；安装器替换例外沿用 ProductContract。
 
 ## 更新和恢复
 
-Launcher 启动时以及 Native Host 运行期间约每六小时检查一次。后台按 client-settings 读取 local/OSS/npm 候选，只下载、校验、doctor 和暂存最高兼容 runtime；不创建 Service 或计划任务，不自动激活，不强关活动任务。若某个来源不可用，`auto` 继续使用其他来源；若没有兼容候选，已有 current runtime 继续使用，不降级；没有可用 current runtime 才报告准备失败。
+保留启动后及运行期间约六小时自动调度，不增设 Service 或计划任务。自动/手动共用发行发现和准备，同一进行中准备可复用；查询来源按有效偏好确定。来源全部成功才陈述“本次所选范围内未发现合格新目标”，失败/未完成显示缺口，不能声称上游全局最新。可读渠道的明确目标仍可准备，不开展跨来源内容等价认证。
 
-托盘中的单一更新菜单项按 `检查更新 -> 下载/暂存 -> 等待任务 -> 确认重启 -> 激活` 变换意图，进度、确认和失败由原生 TaskDialog/系统通知表达，不在 dsh 页面增加控件。激活前重新校验 manifest、digest、Launcher 兼容性和活动任务数，原子切换 `current.json` 后启动新 runtime，完成 Harness 身份检查并确认 dsh 页面可加载。
+窗口原生菜单固定提供版本与更新、检查更新、关于，托盘共用动作。查看只读；手动检查不排空/切换；自动准备写 staged，但 current 和现有运行不变。运行版本、已下载目标及检查失败可同时存在，无候选响应不清空有效 staged。
 
-恢复模式固定为 forward repair：激活前保留旧版本目录以便诊断，但持久数据一旦由新版本接管，旧版本不得自动作为回滚目标。新版本启动失败时保留用户数据和失败记录，通过原生对话框进入修复/重新准备状态。Launcher 或 Bootstrap schema 不兼容时以原生对话框报告 `setup-required`，由用户运行新 MSI；不得由运行中的宿主替换自身。
+确认绑定具体副本与发行，不在确认后重新读取 staged 并当作原目标。背景暂存其他目标时，原目标仍可解析且合格就继续原目标；不可用则解释停止。激活只清除与已激活目标相符的 staged。确认仅当次有效，不跨宿主重启保存。
+
+计划更新先完成旧运行正常退出，再原子写 current，启动目标并呈现。指针提交失败保持旧指针；提交后启动失败按实际环节记录，不宣称更新成功或自动回滚。目标接管 DSH_HOME 后，旧目录存在不构成数据向后兼容证据，继续前向修复。
+
+明确需要新 Launcher 能力时报告 `setup-required`，由用户运行新 MSI；运行中的宿主不替换自身。MSI 继续使用 Tauri/WiX 当前用户构建链，保留 WebView2 探测、许可证、修复与卸载边界；产物要求管理员提升或注册为 per-machine 时阻断打包。运行客户端不持有 OSS 写权限。
+
+异常恢复先查全树：仍存在/未知不得另开运行；已结束则释放占用，不等待死进程补收尾回执。副本可用时同版重启；重建先确保无运行占用；换发行仍需目标确认。窗口失败先处理呈现，证实 WebView2 缺失交 Installer/Microsoft，模型认证/业务错误交 Harness。相同失败无新证据不无限重试，验证故障消除后才清理对应修复线索。
 
 ## 实施顺序与变更边界
 
-1. 建立无 frontend bundle 的 Tauri 2 原生宿主：配置 `windows: []`、`withGlobalTauri: false`、单实例、托盘和原生 TaskDialog，并以构建门禁证明没有页面入口或 remote Tauri IPC。
-2. 建立 release manifest 类型、OSS 精确读取、下载限制、SHA-256、安全解包、doctor 与版本指针；用合成归档覆盖失败路径。
-3. 构建固定 Windows x64 runtime 闭包和 desktop bridge，冻结 Node ABI 与原生模块；禁止用户机器 npm 安装。
-4. 实现随机端口启动、Harness 身份确认、隐藏进程、Job Object、健康监控和有界重启；只有 ready 后才动态创建直接加载 dsh URL 的 WebView。
-5. 实现原生托盘、TaskDialog、活动任务 drain、显式退出与强退边界，再接入更新暂存和确认激活；不向 dsh 页面添加桌面端交互。
-6. 使用 Tauri 官方 WiX/MSI 构建链和项目级 WiX 模板生成当前用户薄安装器，加入 seed Bootstrap、WebView2 探测、许可证、修复和卸载边界；匹配 `vX.Y.Z` 版本 Tag 时由 GitHub Actions 调用 `release:tag`，MSI/Launcher 使用该 Tag 版本，runtime 闭包另以独立 `release` 和显式兼容下限构建。发布工作流先读取并校验已有 catalog（无 catalog 时建立空 seed），再将 immutable runtime ZIP、manifest、catalog 按顺序上传并匿名回读，最后提交 OSS Bootstrap，最后将 MSI 上传同名 GitHub Release。发布失败不得静默丢弃已有 catalog 历史。发布工作流只从 `oss-release` Environment Secrets 获取 OSS 写凭据，运行客户端不持有写权限。生成 MSI 若注册为 per-machine 或要求提升权限，立即阻断打包，不并行增加第二套安装器。
+| 顺序 | A → B 与修改边界 | 完成证据 / 前置条件 |
+|---|---|---|
+| 1 | 项目入口、产品契约、当前设计从旧闭包规则调整为已采纳模型 | 正式规则一致，保留实现差异，文档检查通过；文档调整不代表代码改变 |
+| 2 | 核对官方精确包安装和 Harness 退出接口 | 私有 Windows x64 目录安装、入口和原生依赖证据；入口、工作、收尾接口覆盖结论。缺口仅限制依赖它的切片 |
+| 3 | runtime.rs/paths.rs 的发行、副本、准备、双指针；process.rs 启动事实 | 精确目标、无认证门槛、旧状态转换、准备失败保留 current 和数据 |
+| 4 | host.rs/dialogs.rs 的标题、原生入口和更新反馈 | 运行/选择/已下载版本分开，未知可见，检查保留 staged，各入口共用动作 |
+| 5 | job.rs/process.rs/bridge 与 host.rs 的退出、确认、激活、恢复 | U1 齐备才实现完整正常退出；全树/收尾分离，确认目标稳定，恢复不等死进程 |
+| 6 | prepare/build/publish-runtime、release-tag、build-msi 及 GitHub workflow 的旧闭包消费者 | 原有 MSI 链内解除官方更新对重发闭包的依赖，保留自有制品验证；不操作远程发布物 |
 
-不得照搬参考项目的系统 Node 复用、Node 最新版解析、`@latest`、固定 3080、TCP-only ready、`taskkill /T /F` 日常退出、完整 stdout 日志或将 runtime payload 发布到 GitHub Release 作为运行期下载源。
+源码、类型和定向测试在明确的实现任务中修改；本设计提供切片输入，不把未验证的安装/退出能力当作已满足。目标项目以外的模型源保持引用，本项目采纳与实现责任归 ProductContract 和本设计。
 
 ## 编码约束与停止条件
 
-- 编码前读取本项目 ProductContract、CurrentDesign、上游目标 dsh 版本的真实 CLI/退出契约及目标 Tauri 2 API；实际源码路径与本文设想冲突时先修正唯一设计所有者。
-- 只新增 DSH Desktop 原生宿主、runtime 构建工具和定向测试；不得新增任何页面源码或前端构建工具，不得修改上游 DeepSeek Harness 页面和公共接口，除非用户另行授权并枚举消费者。
-- 任何密钥、OSS 写凭据、API Key、日志或生成制品不得进入 Git。运行客户端不持有 OSS 写权限。
-- 如果固定 dsh 版本无法加载目标原生模块、无法提供可验证 readiness/退出桥、WiX 不能形成可验证的 per-user MSI、OSS 前缀冲突，或实现必须扩大到 macOS/Linux/公开生产签名，则停止实施并报告证据。
+- 先读项目入口、产品契约、相关模型、目标源码及测试。核对官方接口时绑定具体发行，不把浮动主分支说明当固定版本保证。
+- 只改相关 Native Host、准备、bridge 适配和直接构建消费者；不改 Harness 页面、业务数据结构或上游公共接口，不增自有页面、业务镜像、服务或全局机器配置。
+- 保持隐藏进程、单实例、随机端口、独立 DSH_HOME、卸载留数据与确认边界；密钥、Token、正文、日志和生成物不入 Git。
+- 停止受影响切片：官方安装要求编译器/系统依赖而与产品承诺冲突；退出接口无法覆盖目标；无法辨认旧目标；必须改上游公共接口；需要新权限、秘密或外部发布。报告具体缺口，不弱化断言或重设自有认证门槛。
+- 无待定产品方向；待查证的是安装可行性、实际接口与迁移样例。数据向后兼容缺口继续以 forward repair 处理，不自动增加回滚。
 
 ## Development 完成标准
 
-- manifest 解析、版本兼容、大小/digest、路径穿越、重复项、取消、staging 清理和原子 current 指针均有定向测试。
-- 私有 Node 与固定 dsh closure 在目标 ABI 上完成有界机器可读 `--version`、原生模块加载、ripgrep、bridge 协议和随机端口启动 release doctor；日常启动只运行缓存完整性与轻量 availability doctor。
-- bridge 定向测试覆盖原始 stdin 字节、未知 operation、协议版本、消息上限、超时、幂等 drain、非零退出、输出上限、Launcher 退出和完整进程树清理。
-- 启动命令包含 `--port 0 --no-open`；Tauri 配置为 `windows: []`、`withGlobalTauri: false`，仓库不存在产品页面入口或前端 bundle，启动阶段不创建 WebView。
-- WebView 只在 Harness 身份验证后创建并直接加载 dsh URL；加载文档具有 dsh 的 `window.__DSH_BOOT__`，不存在桌面端自有 DOM、样式、脚本或注入，远程页面调用 Tauri API 被拒绝。
-- runtime 未 ready 或异常退出时不显示 WebView 兜底页；下载、doctor、更新、退出和故障动作均可从 Windows Installer、原生 TaskDialog、托盘或系统通知完成。
-- Windows 后台过程不闪终端；Launcher 正常退出和崩溃后均无其拥有的残留进程。
-- MSI 安装、升级、修复或卸载发现 DSH Desktop 主进程仍在运行时，先显示可取消的 5 秒倒计时；用户取消则中止本次安装，倒计时结束则只强制结束安装目录内已验证的主进程及其 Job Object 子进程，确保 MSI 能替换被占用文件。
-- 活动任务时关闭窗口不终止任务；显式退出完成 drain；强退必须来自单独用户意图。
-- 更新失败不改变 current 或用户数据；兼容候选可暂存，激活需用户确认；不兼容 Launcher 显示 `setup-required`。
-- 当前用户 MSI 的安装、修复和卸载边界可由构建产物检查证明，Installer 字节数、首启下载量和最终占用分别报告。
-- 执行范围匹配的格式、静态检查、Rust 单元/组件测试、manifest/bridge/归档 verifier、WebView 宿主定向测试与本地打包 smoke；不得建立前端测试套件。独立干净机候选验收和 OSS 正式发布分别留给用户另行建立的 SystemTest 与 Deployment。
+方案调整以所有者一致、来源明确、实现差异与前置证据清楚及文档门禁通过为完成。下列是对应代码切片的白盒要求，不是本次方案任务已执行结果：
+
+- 精确官方目标可在私有目录准备；无本产品 closure descriptor 不阻断发现；准备失败不改变 current/DSH_HOME。
+- 自动暂存后未确认重开仍用 current；旧 runtime release 不误当 Harness 版本；新 current 启动失败显示未运行。
+- 标题、关于、更新面板与托盘共用运行事实；检查失败保留 staged；查看不下载/切换；呈现失败不冒充副本损坏。
+- bridge 失败按未知，审批等待完成工作不被 running 数遗漏；回执不当收尾；根退出树仍存在/未知不启动新运行；全树结束收尾未知允许按规则同版恢复。
+- 确认 C2 后暂存 C3 不替换确认，激活 C2 不清 C3；准备失败、指针失败、提交后启动失败分别断言；失败不删除或回滚业务数据。
+- 按边界选测试：Rust 使用 `cargo +stable-x86_64-pc-windows-gnu test --manifest-path src-tauri/Cargo.toml`；bridge 使用 `npm run test:bridge`；构建消费者按需使用 `npm run test:runtime-build`、`npm run test:release-tag`、`npm run test:runtime-publish`；正式文档使用 `npm run check:docs`。旧 doctor 测试不作为新目标成立的证明。
+- 安装路径需要私有目录精确安装与启动的定向证据；原生入口/进程树需要 Windows 交互与所属子进程证据。mock 只证明消费者分支，不能补足 U1；独立候选验收及正式发布不列为实施步骤。

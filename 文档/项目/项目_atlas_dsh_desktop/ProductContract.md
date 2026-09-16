@@ -4,11 +4,13 @@ Status: Active
 Kind: ProductContract
 Scope: atlas-dsh-desktop / 首版桌面交付
 Owner: 项目维护者
-Updated: 2026-08-21
+Updated: 2026-09-16
 Depends On:
 - AGENTS.md
 
 ## 产品结果
+
+本契约承接已确认的[基础领域模型](../../../../xrain-ontology/建模档案/tauri-deepseek-harness/领域模型.md)，并按 2026-09-16 用户对推荐方案的明确采纳，承接[持续使用与更新增量](../../../../xrain-ontology/建模档案/tauri-deepseek-harness/增量-持续使用与更新.md)中的全树结束、异常恢复分流、具体目标确认和用户可见反馈。该采纳适用于本项目目标契约，不表示源码已满足模型，也不消除退出事实与数据兼容性的证据缺口。
 
 DSH Desktop 是 DeepSeek Harness 的非官方 Windows 安装与运行宿主。它安装并管理应用私有运行时，启动 `dsh web`，再把 dsh 自己输出的完整 Web UI 原样加载到桌面 WebView，使用户无需预装 Node.js、pnpm 或 `dsh`。产品名使用 `DSH Desktop`；不得使用 `DeepSeek Harness Desktop` 暗示官方产品，非官方声明写入安装器元数据、发行说明和许可证材料，不为此创建页面。
 
@@ -16,10 +18,12 @@ DSH Desktop 是 DeepSeek Harness 的非官方 Windows 安装与运行宿主。�
 
 | 所有者 | 拥有 | 不得拥有 |
 |---|---|---|
-| DSH Desktop | 安装、WebView2 前置探测、私有 runtime、版本与制品校验、安全解包、doctor、进程树、启动/退出、托盘和更新生命周期 | 任何 Web 页面、业务 UI、页面路由、模型配置、工作区、任务、审批、会话、问题交互或 Harness 业务状态 |
+| DSH Desktop | 安装、WebView2 前置探测、私有 runtime 的获取与准备、本机副本与运行事实、进程树、启动/退出、原生版本入口和更新生命周期；自有 Installer/Launcher 的制品责任 | 任何 Web 页面、业务 UI、页面路由、模型配置、工作区、任务、审批、会话、问题交互、Harness 业务状态或官方依赖内容认证 |
 | DeepSeek Harness / `dsh web` | WebView 中的全部 HTML、CSS、JavaScript、DOM、路由和业务交互，包括模型配置、工作区、任务、审批与会话 | Windows 安装、桌面 runtime 获取、制品激活、原生进程树和系统集成 |
 
 WebView 中唯一允许呈现的 Web 内容是当前受管 runtime 执行 `dsh web --port 0 --no-open` 后返回的 dsh 页面。DSH Desktop 不创建启动页、等待页、错误页、更新页、关于页或任何兜底页面，也不复制、修改、覆盖或向该页面注入桌面端 DOM、CSS、脚本和控件。
+
+官方依赖直接采用实际发布者的版本、发布位置、制品和安装方式；本产品不追加摘要比对、闭包认证、跨来源等价证明、doctor 或重新打包发布的前置门槛。官方安装工具自身的既有行为归该工具。宿主负责下载、安装和启动结果的如实反馈，以及本机路径、进程归属和用户数据保护；这些操作事实不构成官方内容认证。
 
 ## 首版边界
 
@@ -28,22 +32,26 @@ WebView 中唯一允许呈现的 Web 内容是当前受管 runtime 执行 `dsh w
 | 平台 | Windows 10/11 x64 |
 | 桌面框架 | Tauri 2，复用上游 Harness Web UI |
 | 安装形态 | 当前用户级薄安装器；首次启动允许联网准备私有运行时 |
-| 分发模式 | `self-use`；Windows x64 MSI 通过匹配版本 Tag 的 GitHub Release 提供下载，项目发布的 runtime 闭包仍通过 OSS 交付；客户端默认也可复用本地已验证闭包和授权 npm closure；应用自有二进制可不做发布者签名，但必须绑定源码提交、版本、大小、SHA-256 与 doctor 结果 |
-| 应用自有二进制来源 | Installer/Launcher MSI：GitHub Release；项目 runtime manifest 与 payload：scheme `https`, host `shared-public-assets.oss-cn-beijing.aliyuncs.com`, prefix `atlas-dsh-desktop/`；运行期来源策略还包括本地状态和配置的 npm registry closure |
+| 分发模式 | `self-use`；Windows x64 MSI 通过匹配版本 Tag 的 GitHub Release 提供下载；应用自有二进制可不做发布者签名，仍绑定源码提交、版本、大小、SHA-256 与范围匹配的构建验证。官方依赖直接获取，不以项目重发闭包为前提 |
+| 应用自有二进制来源 | Installer/Launcher MSI：GitHub Release。既有项目 OSS 前缀 `shared-public-assets.oss-cn-beijing.aliyuncs.com/atlas-dsh-desktop/` 的历史制品由原发布链管理，不升级为官方发行源；现有缓存与状态的处理见 CurrentDesign |
 | 模型 | 不内置本地模型；模型与 API Key 仍由 Harness 的用户配置入口管理 |
-| 窗口关闭 | 有活动任务时隐藏到托盘；无活动任务时可正常退出；托盘“退出”执行受控 drain |
+| 窗口关闭 | 有待完成工作或工作事实未知时保留运行；明确无待完成工作时可进入正常退出。窗口原生菜单和托盘共用退出动作 |
 
 首版不要求系统 Node、全局 PATH、Git、编译器或用户机器上的原生模块构建环境。系统 Git、外部 MCP 程序和其他第三方工具只有在 Harness 对具体能力明确要求时才作为可诊断的外部前置，不冒充内置运行时。
 
-Windows WebView2 是由 Microsoft 服务的系统前置，不属于应用私有 runtime；Installer 必须先探测并通过 Tauri 官方安装模式补足缺失版本，随后重新探测。Installer/Launcher MSI 从对应 GitHub Release 获取，项目发布的 manifest 与 runtime payload 仍只从上述 OSS 前缀交付；客户端 npm 来源不得绕过 closure、完整性和 doctor 校验。
+Windows WebView2 是由 Microsoft 服务的系统前置，不属于应用私有 runtime；Installer 必须先探测并通过 Tauri 官方安装模式补足缺失版本，随后重新探测。Installer/Launcher MSI 从对应 GitHub Release 获取；官方依赖的取得与安装跟随其实际发布者，不要求为 DSH Desktop 提供专用 manifest。
 
 ## 用户可见行为
 
-1. 安装、修复和卸载状态由 Windows Installer 表达；如果 MSI 发现 DSH Desktop 仍在运行，先显示可取消的 5 秒倒计时，取消则中止安装，倒计时结束只强制结束产品进程树后继续替换文件；首次启动的下载、校验、解压、doctor 与失败恢复由原生 TaskDialog、托盘和系统通知表达，不先打开 WebView，也不出现桌面端页面。
+1. 安装、修复和卸载状态由 Windows Installer 表达；如果 MSI 发现 DSH Desktop 仍在运行，先显示可取消的 5 秒倒计时，取消则中止安装，倒计时结束只强制结束产品进程树后继续替换文件；首次启动的下载、安装准备与失败恢复由原生 TaskDialog、托盘和系统通知表达，不先打开 WebView，也不出现桌面端页面。
 2. 运行时身份验证 ready 后，DSH Desktop 动态创建唯一 WebView 窗口并直接加载本次启动产生的 dsh 回环 URL；窗口内完整内容归 dsh，不额外打开浏览器或终端窗口。
-3. 下载失败、空间不足、校验失败、doctor 失败或 runtime 异常退出时，关闭或隐藏失效的 WebView，保留当前可运行版本与用户数据，并通过原生对话框显示失败组件、阶段、诊断位置和重试/退出动作；不得显示替代页面。
-4. 应用可后台检查并暂存兼容更新；默认合并 local/OSS/npm 来源，也可在 `%APPDATA%\DSH Desktop\client-settings.json` 固定来源和具体版本。检查入口和确认动作只存在于原生托盘菜单与对话框。切换版本、重启或退出不得打断活动任务，必须等待 drain 并由用户确认。
+3. 下载、安装准备、启动或页面呈现失败时，按证据说明失败环节、当前是否仍在运行及可执行恢复动作；失效 WebView 隐藏或关闭。窗口呈现失败、模型认证失败均不自动认定副本损坏。保留用户数据，不显示替代页面。
+4. 宿主运行期间自动检查并下载、安装准备、暂存合格更新；不增加退出后继续运行的服务。用户可以立即检查、下载具体目标和确认切换。检查、下载、暂存及固定版本偏好均不代表切换确认；未确认的 staged 不因宿主重开而自动启用。来源选择独立于自动触发，来源失败不解释为“已是最新”。
 5. 卸载默认删除安装器和运行时拥有的文件，保留 Harness 配置、会话、工作区登记和用户结果；删除用户数据必须是单独的明确选择。
+6. 打开应用即可识别当前 Harness 版本，并从主窗口找到查看与更新入口。采用窗口标题展示运行版本，窗口原生菜单提供“版本与更新”“检查更新”“关于”，托盘提供同义入口。“关于”分列 Launcher 与 Harness 版本；当前版本来自本轮运行，选择目标和已下载目标分别标注。无运行显示未运行，版本不可读显示未知。查看信息不触发下载或切换。
+7. 正常退出须由 Harness 证明实际停止接纳新工作、完整待完成工作归零、退出收尾完成；待完成工作包括等待审批/输入及相关受管子工作。running agent 数为零、局部 draining 标记、请求已接收或根进程消失均不能替代这些事实。未知时保留运行并说明缺口，用户仍可明确选择强退；强退不解释为正常收尾。
+8. 本轮受管全树结束被证实后解除运行占用，正常收尾结果独立保留。异常结束后的恢复不等待死进程补回执；同版恢复使用原数据家目录，改换发行须有具体目标确认。树仍存在或未知时不得启动另一轮运行或原位重建其副本；强退完成也须有全树结束证据。
+9. 计划更新先完成正常退出；确认只适用于具体副本和发行，背景发现不得替换该目标。目标有效且无未结束运行时才切换；新运行就绪且页面呈现成功后才报告新版本可用。current 已切换但启动失败须如实报告并进入前向修复。
 
 ## 数据与兼容性
 
