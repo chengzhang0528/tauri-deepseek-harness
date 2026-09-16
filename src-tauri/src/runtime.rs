@@ -50,9 +50,9 @@ impl UpdateSourcePolicy {
     pub fn label(self) -> &'static str {
         match self {
             Self::Auto => "自动选择",
-            Self::Local => "本地副本",
-            Self::Oss => "旧 OSS",
-            Self::Npm => "官方 npm",
+            Self::Local => "仅本机已下载的版本",
+            Self::Oss => "仅旧版安装缓存",
+            Self::Npm => "官方软件源",
         }
     }
 }
@@ -150,7 +150,7 @@ pub struct CheckResult {
 impl CheckResult {
     pub fn summary(&self) -> String {
         let result = self.available.as_ref().map_or_else(
-            || "本次所选范围内未发现可更新目标".into(),
+            || "没有找到可安装的新版本".into(),
             |target| format!("可更新 Harness {}", target.version),
         );
         if self.issues.is_empty() {

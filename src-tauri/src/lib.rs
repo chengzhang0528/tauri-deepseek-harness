@@ -7,6 +7,7 @@ mod official;
 mod paths;
 mod process;
 mod runtime;
+mod update_ui;
 
 #[cfg(not(test))]
 mod host;

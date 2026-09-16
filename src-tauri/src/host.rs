@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -10,25 +10,20 @@ use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_single_instance::init as single_instance;
 
-use crate::runtime::{
-    AvailableUpdate, CheckResult, LAUNCHER_VERSION, PreparedRuntime, RuntimeManager,
-    UpdateSourcePolicy,
-};
+use crate::runtime::{LAUNCHER_VERSION, PreparedRuntime, RuntimeManager, UpdateSourcePolicy};
+use crate::update_ui::{UpdateOffer, UpdateView};
 use crate::{dialogs, paths::AppPaths, process::HarnessProcess};
 
 const WINDOW_LABEL: &str = "dsh";
-const EXIT_GAP: &str = "当前 Harness 未提供完整待完成工作、停止接纳和收尾完成证据。运行已保留；如需停止，请从“帮助 → 软件更新 → 高级选项”选择“停止后台服务”。强制停止可能中断任务，不代表正常收尾。";
+const EXIT_GAP: &str = "应用仍在运行。如需强制停止，请选择“帮助 → 故障处理 → 强制停止应用”。这可能中断任务并丢失未保存内容。";
 
 #[derive(Clone, Default)]
 struct HostState {
     process: Arc<Mutex<Option<HarnessProcess>>>,
     busy: Arc<AtomicBool>,
     exiting: Arc<AtomicBool>,
-    check: Arc<Mutex<CheckResult>>,
     feedback: Arc<Mutex<String>>,
-    status_items: Arc<Mutex<Vec<MenuItem<tauri::Wry>>>>,
-    version_menus: Arc<Mutex<Vec<Submenu<tauri::Wry>>>>,
-    selections: Arc<Mutex<HashMap<String, AvailableUpdate>>>,
+    action_items: Arc<Mutex<Vec<MenuItem<tauri::Wry>>>>,
 }
 
 #[allow(clippy::missing_panics_doc)]
@@ -65,6 +60,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
     tray.build(app)?;
     state.busy.store(true, Ordering::SeqCst);
+    enable_actions(&state, false);
     let handle = app.handle().clone();
     let initial = state.clone();
     thread::spawn(move || {
@@ -91,50 +87,32 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
 fn build_menu(app: &AppHandle, state: &HostState) -> tauri::Result<Menu<tauri::Wry>> {
     use tauri::menu::PredefinedMenuItem;
-    let item = |id, text| MenuItem::with_id(app, id, text, true, None::<&str>);
+    let item = |id: &str, text| {
+        let shortcut = match id {
+            "check" => Some("Ctrl+Shift+U"),
+            "update-settings" => Some("Ctrl+Comma"),
+            _ => None,
+        };
+        let item = MenuItem::with_id(app, id, text, true, shortcut)?;
+        if matches!(
+            id,
+            "check" | "update-settings" | "recover" | "force-stop" | "exit"
+        ) {
+            state.action_items.lock().unwrap().push(item.clone());
+        }
+        Ok::<_, tauri::Error>(item)
+    };
     let separator = || PredefinedMenuItem::separator(app);
-    let status = MenuItem::with_id(app, "status", "正在启动…", false, None::<&str>)?;
-    state.status_items.lock().unwrap().push(status.clone());
-    let versions = Submenu::with_id_and_items(app, "versions", "指定版本", true, &[])?;
-    state.version_menus.lock().unwrap().push(versions.clone());
-    let sources = Submenu::with_id_and_items(
+    let troubleshooting = Submenu::with_id_and_items(
         app,
-        "sources",
-        "下载来源",
+        "troubleshooting",
+        "故障处理",
         true,
         &[
-            &item("source-auto", "自动选择（推荐）")?,
-            &item("source-npm", "官方软件源")?,
-            &item("source-local", "本机已下载的版本")?,
-            &item("source-oss", "旧版安装缓存")?,
-        ],
-    )?;
-    let advanced = Submenu::with_id_and_items(
-        app,
-        "advanced",
-        "高级选项",
-        true,
-        &[
-            &versions,
-            &sources,
-            &separator()?,
             &item("info", "诊断信息…")?,
-            &item("recover", "恢复应用…")?,
-            &item("force-stop", "停止后台服务…")?,
-        ],
-    )?;
-    let updates = Submenu::with_id_and_items(
-        app,
-        "updates",
-        "软件更新",
-        true,
-        &[
-            &status,
+            &item("recover", "启动或修复当前版本…")?,
             &separator()?,
-            &item("download", "下载更新")?,
-            &item("update-now", "立即更新…")?,
-            &separator()?,
-            &advanced,
+            &item("force-stop", "强制停止应用…")?,
         ],
     )?;
     let file = Submenu::with_id_and_items(
@@ -165,8 +143,9 @@ fn build_menu(app: &AppHandle, state: &HostState) -> tauri::Result<Menu<tauri::W
         true,
         &[
             &item("check", "检查更新…")?,
-            &item("update-now", "立即更新…")?,
-            &updates,
+            &item("update-settings", "更新设置…")?,
+            &separator()?,
+            &troubleshooting,
             &separator()?,
             &item("about", "关于 DSH Desktop…")?,
         ],
@@ -206,23 +185,7 @@ fn dispatch(app: &AppHandle, id: &str) {
             });
         }
         "check" => check_updates(app, false),
-        "download" => operation(app, |_, state| {
-            let _progress = dialogs::Progress::show(state.feedback.clone());
-            let target = state
-                .check
-                .lock()
-                .map_err(|_| anyhow::anyhow!("目标状态不可读"))?
-                .available
-                .clone()
-                .context("请先检查并选择具体目标")?;
-            let copy = manager()?.stage_target(&target, &|message| feedback(state, message))?;
-            feedback(
-                state,
-                &format!("Harness {} 已准备，等待确认切换", copy.version_label()),
-            );
-            Ok(())
-        }),
-        "update-now" => operation(app, |app, state| update_now(app, state, None)),
+        "update-settings" => operation(app, |_, state| update_settings(state)),
         "recover" => operation(app, |app, state| {
             {
                 let mut slot = state
@@ -231,11 +194,24 @@ fn dispatch(app: &AppHandle, id: &str) {
                     .map_err(|_| anyhow::anyhow!("运行状态不可读"))?;
                 if let Some(process) = slot.as_mut() {
                     if !process.tree_ended()? {
+                        dialogs::info(
+                            "应用正在运行",
+                            "当前版本无需修复。若窗口未显示，请选择“视图 → 显示主窗口”。",
+                        );
                         return present(app, &process.runtime, process.url.clone());
                     }
                     *slot = None;
                 }
             }
+            if !dialogs::action(
+                "启动或修复当前版本",
+                "将启动当前版本；仅在程序文件缺失时重新下载同一版本。保留配置和会话。",
+                "启动当前版本",
+            ) {
+                return Ok(());
+            }
+            let _progress =
+                dialogs::Progress::with_heading(state.feedback.clone(), "正在启动当前版本");
             let manager = manager()?;
             let runtime = if manager.read_current()?.is_some() {
                 manager.repair_current(&|message| feedback(state, message))?
@@ -246,9 +222,10 @@ fn dispatch(app: &AppHandle, id: &str) {
         }),
         "exit" => operation(app, |app, state| {
             if require_no_run(state).is_err() {
-                if !dialogs::confirm(
+                if !dialogs::action(
                     "退出 DSH Desktop",
                     "无法确认所有任务已经完成。\n\n仍要退出吗？强制退出可能中断任务，未保存的内容可能丢失。",
+                    "强制退出",
                 ) {
                     return Ok(());
                 }
@@ -268,9 +245,10 @@ fn dispatch(app: &AppHandle, id: &str) {
         "force-stop" | "force-exit" => {
             let exit = id == "force-exit";
             operation(app, move |app, state| {
-                if !dialogs::confirm(
+                if !dialogs::action(
+                    "强制停止应用",
+                    "将结束应用及其后台任务，窗口也会关闭。正在进行的任务可能中断，未保存内容可能丢失。",
                     "强制停止",
-                    "强制结束本轮全部受管进程？任务可能中断，收尾结果未知。",
                 ) {
                     return Ok(());
                 }
@@ -297,52 +275,6 @@ fn dispatch(app: &AppHandle, id: &str) {
                 Ok(())
             });
         }
-        id if id.starts_with("target-") => {
-            let id = id.to_owned();
-            operation(app, move |_, state| {
-                let target = state
-                    .selections
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("版本列表不可读"))?
-                    .get(&id)
-                    .cloned()
-                    .context("版本列表已变化，请重新检查")?;
-                let manager = manager()?;
-                let mut settings = manager.read_settings()?;
-                settings.version = Some(target.version.clone());
-                manager.write_settings(&settings)?;
-                state
-                    .check
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("目标状态不可读"))?
-                    .available = Some(target.clone());
-                feedback(
-                    state,
-                    &format!("已选择 Harness {}；尚未下载或切换", target.version),
-                );
-                Ok(())
-            });
-        }
-        id if id.starts_with("source-") => {
-            let source = match id {
-                "source-npm" => UpdateSourcePolicy::Npm,
-                "source-local" => UpdateSourcePolicy::Local,
-                "source-oss" => UpdateSourcePolicy::Oss,
-                _ => UpdateSourcePolicy::Auto,
-            };
-            operation(app, move |_, state| {
-                let manager = manager()?;
-                let mut settings = manager.read_settings()?;
-                settings.source = source;
-                manager.write_settings(&settings)?;
-                *state
-                    .check
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("检查状态不可读"))? = CheckResult::default();
-                feedback(state, "来源已保存；固定版本偏好保持，请检查更新");
-                Ok(())
-            });
-        }
         _ => {}
     }
 }
@@ -361,6 +293,7 @@ fn operation(
     if !reserve(&state) {
         return;
     }
+    enable_actions(&state, false);
     let app = app.clone();
     thread::spawn(move || {
         let result = action(&app, &state);
@@ -369,6 +302,7 @@ fn operation(
 }
 fn complete(state: &HostState, result: Result<()>, notify: bool) {
     state.busy.store(false, Ordering::SeqCst);
+    enable_actions(state, true);
     if let Err(error) = result {
         feedback(state, &format!("操作未完成：{error:#}"));
         if notify {
@@ -380,9 +314,18 @@ fn feedback(state: &HostState, text: &str) {
     if let Ok(mut value) = state.feedback.lock() {
         *value = text.into();
     }
-    if let Ok(items) = state.status_items.lock() {
+}
+
+fn enable_actions(state: &HostState, enabled: bool) {
+    let running = state.process.lock().map_or(true, |slot| slot.is_some());
+    if let Ok(items) = state.action_items.lock() {
         for item in items.iter() {
-            let _ = item.set_text(text);
+            let applicable = match item.id().as_ref() {
+                "recover" => !running,
+                "force-stop" => running,
+                _ => true,
+            };
+            let _ = item.set_enabled(enabled && applicable);
         }
     }
 }
@@ -392,72 +335,85 @@ fn check_updates(app: &AppHandle, automatic: bool) {
     if !reserve(&state) {
         return;
     }
+    enable_actions(&state, false);
     let app = app.clone();
     thread::spawn(move || {
-        let result = (|| {
-            feedback(&state, "正在检查官方版本…");
-            let manager = manager()?;
-            let check = manager.check_for_update()?;
-            render_versions(&state, &check)?;
-            let summary = check.summary();
-            *state
-                .check
-                .lock()
-                .map_err(|_| anyhow::anyhow!("检查状态不可读"))? = check.clone();
-            feedback(&state, &summary);
-            if automatic {
+        let result = if automatic {
+            (|| {
+                let manager = manager()?;
+                let check = manager.check_for_update()?;
+                feedback(&state, &check.summary());
                 if let Some(target) = check.available {
                     let copy =
                         manager.stage_target(&target, &|message| feedback(&state, message))?;
                     feedback(
                         &state,
                         &format!(
-                            "Harness {} 已下载；选择“帮助 → 立即更新”完成安装。{}",
-                            copy.version_label(),
-                            summary
+                            "{} 已下载；选择“帮助 → 检查更新”查看并安装。",
+                            copy.version_label()
                         ),
                     );
                 }
-            } else if check.available.is_some() || manager.read_staged()?.is_some() {
-                if dialogs::confirm(
-                    "发现更新",
-                    format!("{summary}\n\n是否现在更新？下载完成后会请你确认重启。"),
-                ) {
-                    update_now(&app, &state, check.available)?;
-                }
-            } else {
-                dialogs::info("检查更新", summary);
-            }
-            Ok(())
-        })();
+                Ok(())
+            })()
+        } else {
+            show_updates(&app, &state)
+        };
         complete(&state, result, !automatic);
     });
 }
 
-/// Downloading never confirms a restart. Keep the exact prepared copy across
-/// the final confirmation, then observe the owned tree ending before activation.
-fn update_now(app: &AppHandle, state: &HostState, selected: Option<AvailableUpdate>) -> Result<()> {
+fn running_version(state: &HostState) -> Result<String> {
+    Ok(state
+        .process
+        .lock()
+        .map_err(|_| anyhow::anyhow!("暂时无法读取版本"))?
+        .as_ref()
+        .map_or_else(
+            || "未运行".into(),
+            |process| process.runtime.copy.version_label().to_owned(),
+        ))
+}
+
+fn show_updates(app: &AppHandle, state: &HostState) -> Result<()> {
     let manager = manager()?;
-    let target = selected.or_else(|| {
-        state
-            .check
-            .lock()
-            .ok()
-            .and_then(|check| check.available.clone())
-    });
-    let confirmed = {
-        let _progress = dialogs::Progress::show(state.feedback.clone());
-        if let Some(target) = target {
-            manager.stage_target(&target, &|message| feedback(state, message))?
-        } else if let Some(staged) = manager.read_staged()? {
-            staged
+    loop {
+        feedback(state, "正在检查更新，请稍候…");
+        let check = {
+            let _progress = dialogs::Progress::with_heading(state.feedback.clone(), "正在检查更新");
+            manager.check_for_update()?
+        };
+        let view = UpdateView::new(
+            &running_version(state)?,
+            manager.read_current()?.as_ref(),
+            manager.read_staged()?.as_ref(),
+            &check,
+            &manager.read_settings()?,
+        );
+        feedback(state, view.heading);
+        if let Some(offer) = view.offer {
+            if dialogs::action(view.heading, &view.description, offer.label()) {
+                update_now(app, state, offer)?;
+            }
+        } else if !check.issues.is_empty() {
+            if dialogs::action(view.heading, &view.description, "重新检查") {
+                continue;
+            }
         } else {
-            let check = manager.check_for_update()?;
-            let summary = check.summary();
-            let Some(target) = check.available else {
-                dialogs::info("软件更新", summary);
-                return Ok(());
-            };
+            dialogs::notice(view.heading, &view.description);
+        }
+        return Ok(());
+    }
+}
+
+/// The visible action owns the exact target across download and restart confirmation.
+fn update_now(app: &AppHandle, state: &HostState, offer: UpdateOffer) -> Result<()> {
+    let manager = manager()?;
+    let confirmed = match offer {
+        UpdateOffer::Install(copy) => copy,
+        UpdateOffer::Download(target) => {
+            feedback(state, &format!("正在下载 Harness {}…", target.version));
+            let _progress = dialogs::Progress::with_heading(state.feedback.clone(), "正在下载更新");
             manager.stage_target(&target, &|message| feedback(state, message))?
         }
     };
@@ -474,25 +430,32 @@ fn update_now(app: &AppHandle, state: &HostState, selected: Option<AvailableUpda
     };
     let description = if running {
         format!(
-            "更新已下载：DeepSeek Harness {}\n\n无法确认所有任务已经完成。强制重启可能中断任务或丢失未保存的内容。\n\n是否现在强制重启并更新？选择“否”可稍后再更新。",
+            "将更新到 DeepSeek Harness {}。\n\n无法确认所有任务已经完成。强制重启可能中断任务或丢失未保存内容。请先完成正在进行的工作。\n\n取消会保留当前运行和已下载更新。",
             confirmed.version_label()
         )
     } else {
         format!(
-            "更新已下载：DeepSeek Harness {}\n\n是否现在安装并打开应用？",
+            "将安装并打开 DeepSeek Harness {}。\n\n取消会保留已下载更新。",
             confirmed.version_label()
         )
     };
-    if !dialogs::confirm("重启并更新", description) {
+    let label = if running {
+        "强制重启并更新"
+    } else {
+        "安装并打开"
+    };
+    if !dialogs::action("更新已下载", &description, label) {
         feedback(
             state,
             &format!(
-                "{} 已下载；准备好后选择“帮助 → 立即更新”",
+                "{} 已下载；稍后从“帮助 → 检查更新”继续安装。",
                 confirmed.version_label()
             ),
         );
         return Ok(());
     }
+    feedback(state, "正在重启并安装更新…");
+    let progress = dialogs::Progress::with_heading(state.feedback.clone(), "正在安装更新");
     {
         let mut slot = state
             .process
@@ -508,39 +471,110 @@ fn update_now(app: &AppHandle, state: &HostState, selected: Option<AvailableUpda
     }
     let prepared = manager.activate(&confirmed)?;
     start_and_present(app, state, &prepared)?;
-    dialogs::info(
+    drop(progress);
+    dialogs::notice(
         "更新完成",
-        format!("已更新到 DeepSeek Harness {}。", confirmed.version_label()),
+        &format!("当前运行：DeepSeek Harness {}。", confirmed.version_label()),
     );
     Ok(())
 }
 
-fn render_versions(state: &HostState, check: &CheckResult) -> Result<()> {
-    let menus = state
-        .version_menus
-        .lock()
-        .map_err(|_| anyhow::anyhow!("版本菜单不可读"))?;
-    let mut selections = state
-        .selections
-        .lock()
-        .map_err(|_| anyhow::anyhow!("版本列表不可读"))?;
-    selections.clear();
-    for menu in menus.iter() {
-        for old in menu.items()? {
-            menu.remove(&old)?;
+fn update_settings(state: &HostState) -> Result<()> {
+    let manager = manager()?;
+    loop {
+        let mut settings = manager.read_settings()?;
+        let description = format!(
+            "更新来源：{}\n版本选择：{}\n\n设置只影响以后检查的范围，保存不会下载或重启。",
+            settings.source.label(),
+            settings.version.as_deref().unwrap_or("自动选择最新版本")
+        );
+        match dialogs::commands(
+            "更新设置",
+            &description,
+            &["更新来源…".into(), "目标版本…".into()],
+        ) {
+            Some(0) => {
+                let sources = [
+                    UpdateSourcePolicy::Auto,
+                    UpdateSourcePolicy::Npm,
+                    UpdateSourcePolicy::Local,
+                    UpdateSourcePolicy::Oss,
+                ];
+                let labels = [
+                    "自动选择（推荐，包含官方软件源）",
+                    "官方软件源（联网）",
+                    "仅本机已下载的版本",
+                    "仅旧版安装缓存（不联网）",
+                ]
+                .map(str::to_owned);
+                let selected = sources
+                    .iter()
+                    .position(|source| *source == settings.source)
+                    .unwrap_or(0);
+                if let Some(index) = dialogs::select(
+                    "更新来源",
+                    "选择检查更新时使用的来源。目标版本设置会保持不变。",
+                    &labels,
+                    selected,
+                ) {
+                    settings.source = sources[index];
+                    manager.write_settings(&settings)?;
+                }
+            }
+            Some(1) => select_version(&manager, state, &mut settings)?,
+            _ => return Ok(()),
         }
-        for (index, target) in check.versions.iter().enumerate() {
-            let id = format!("target-{index}");
-            let item = MenuItem::with_id(
-                menu.app_handle(),
-                &id,
-                format!("Harness {} · {}", target.version, target.source.label()),
-                true,
-                None::<&str>,
-            )?;
-            menu.append(&item)?;
-            selections.insert(id, target.clone());
+    }
+}
+
+fn select_version(
+    manager: &RuntimeManager,
+    state: &HostState,
+    settings: &mut crate::runtime::RuntimeUpdateSettings,
+) -> Result<()> {
+    feedback(state, "正在获取可选版本…");
+    let check = {
+        let _progress = dialogs::Progress::with_heading(state.feedback.clone(), "正在获取版本");
+        manager.check_for_update()?
+    };
+    let current = manager.read_current()?;
+    let mut versions = Vec::new();
+    if let Some(version) = &settings.version {
+        versions.push(version.clone());
+    }
+    for target in check.versions {
+        if current
+            .as_ref()
+            .and_then(|copy| copy.harness_version.as_ref())
+            .is_some_and(|version| {
+                crate::official::compare_versions(&target.version, version).is_lt()
+            })
+        {
+            continue;
         }
+        if !versions.contains(&target.version) {
+            versions.push(target.version);
+        }
+    }
+    let mut labels = vec!["自动选择最新版本（推荐）".to_owned()];
+    labels.extend(versions.iter().map(|version| format!("固定为 {version}")));
+    let selected = settings
+        .version
+        .as_ref()
+        .and_then(|version| versions.iter().position(|value| value == version))
+        .map_or(0, |index| index + 1);
+    let mut description =
+        "固定版本后将不再提示更高版本；选择自动可恢复检查新版本。保存不会安装或重启。".to_owned();
+    if !check.issues.is_empty() {
+        let _ = write!(
+            description,
+            "\n\n版本列表可能不完整：{}",
+            check.issues.join("；")
+        );
+    }
+    if let Some(index) = dialogs::select("目标版本", &description, &labels, selected) {
+        settings.version = index.checked_sub(1).map(|index| versions[index].clone());
+        manager.write_settings(settings)?;
     }
     Ok(())
 }
@@ -725,6 +759,7 @@ fn monitor(app: AppHandle, state: HostState) {
                     let _ = window.set_title("DSH Desktop · Harness 未运行");
                 }
                 feedback(&state, "受管进程树已结束；收尾未知，可选择同版恢复");
+                enable_actions(&state, true);
             } else if let Err(error) = ended {
                 feedback(&state, &format!("进程树状态未知：{error}"));
             }
