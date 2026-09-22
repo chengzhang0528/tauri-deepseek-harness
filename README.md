@@ -12,6 +12,6 @@ DSH Desktop 是 DeepSeek Harness 的非官方 Windows 桌面宿主。它负责�
 
 ## 开发
 
-构建、runtime 准备、安装验收和卸载边界见[构建与验收 DSH Desktop](人类-文档/开发/构建与验收%20DSH%20Desktop.md)。产品边界和技术设计见[产品契约](文档/项目/项目_atlas_dsh_desktop/ProductContract.md)与[当前技术设计](文档/项目/项目_atlas_dsh_desktop/CurrentDesign.md)。
+本地构建与安装检查见[构建与验收 DSH Desktop](人类-文档/开发/构建与验收%20DSH%20Desktop.md)。产品边界和技术设计见[产品契约](文档/项目/项目_atlas_dsh_desktop/ProductContract.md)与[当前技术设计](文档/项目/项目_atlas_dsh_desktop/CurrentDesign.md)。
 
 [全部人类文档](人类-文档/README.md)

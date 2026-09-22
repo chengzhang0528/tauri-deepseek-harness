@@ -2,9 +2,9 @@
 
 Status: Active
 Kind: TaskControl
-Scope: coder_driver-template / 可恢复活动任务
+Scope: atlas-dsh-desktop / 可恢复活动任务
 Owner: 项目维护者
-Updated: 2026-08-08
+Updated: 2026-09-22
 Depends On:
 - ../AGENTS.md
 

@@ -1,10 +1,10 @@
-# coder_driver 智能体治理工作流契约
+# DSH Desktop 智能体治理工作流契约
 
 Status: Active
 Kind: WorkflowContract
-Scope: coder_driver-template / 智能体治理
+Scope: atlas-dsh-desktop / 智能体治理
 Owner: 项目维护者
-Updated: 2026-08-08
+Updated: 2026-09-22
 Depends On:
 - ../WORKSPACE_STRUCTURE.md
 

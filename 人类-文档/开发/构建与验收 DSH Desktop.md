@@ -4,7 +4,7 @@
 
 ## 首次构建
 
-1. 在仓库根目录打开 PowerShell，准备 Node.js/npm、Rust stable 和 `stable-x86_64-pc-windows-gnu` 工具链。首次获取 WiX 需要联网。
+1. 在仓库根目录打开 PowerShell，准备 Node.js 22/npm、Rust 与 `stable-x86_64-pc-windows-gnu` 工具链；本地 Node 版本与 Release 工作流一致。首次获取依赖和 WiX 需要联网。
 2. 安装构建依赖：
 
    ```powershell
@@ -36,10 +36,8 @@ npm run check:docs
 
 按[本机安装与恢复](../../文档/项目/项目_atlas_dsh_desktop/Runbook.md)安装刚构建的 MSI，并检查已安装文件版本、HKCU 注册和窗口。该操作修改当前用户的应用安装，保留 Harness 用户数据。
 
-首次无运行时会直接通过官方发行方式准备私有 Node 与精确 Harness npm 版本；系统 Node 不作为产品运行时。已有 current 时保留原版启动，后台只准备 staged。选择“帮助 → 检查更新”，结果对话框显示当前版本和检查范围；仅在有更新时显示下载或重启更新按钮。来源与版本设置在“帮助 → 更新设置”，单选列表应标记当前值。取消重启会保留当前运行和已下载更新。
-
-关窗保留运行，托盘可重开。当前上游没有完整退出证据，退出时会提示未完成任务的风险，确认后强制退出。进程树结束后才能恢复或切换。详细边界见[产品契约](../../文档/项目/项目_atlas_dsh_desktop/ProductContract.md)。
+依次执行 Runbook 的[启动与确认](../../文档/项目/项目_atlas_dsh_desktop/Runbook.md#启动与确认)，核对官方页面、版本和更新入口；异常时按[恢复](../../文档/项目/项目_atlas_dsh_desktop/Runbook.md#恢复)处理。退出从“文件 → 退出”操作，若提示无法确认任务完成，先完成工作或明确选择强制退出。
 
 ## 发布构建的区别
 
-`release:tag` 将指定 Tag 版本传入同一 MSI 构建器；GitHub Release 工作流只发布自有 MSI，不再生成或上传官方依赖闭包。旧 runtime 脚本仅保留为历史工具，不在 Launcher 或 MSI 发布主路径中。远端 Tag、Release 和 OSS 写操作需要明确发布授权。
+正式发布的前置条件、Tag 操作及结果检查见 Runbook 的 [GitHub Release](../../文档/项目/项目_atlas_dsh_desktop/Runbook.md#github-release)。不要将推送 Tag 当作本地构建步骤。

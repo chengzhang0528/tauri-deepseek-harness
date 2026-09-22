@@ -1,15 +1,13 @@
-# coder_driver 工作空间智能体入口
+# DSH Desktop 工作空间智能体入口
 
 Status: Active
-Scope: coder_driver-template
+Scope: atlas-dsh-desktop
 Owner: 项目维护者
-Updated: 2026-08-13
+Updated: 2026-09-22
 Depends On:
 - none
 
-本模板只提供文档驱动协同控制面，不预设产品、技术栈、服务、端口或源码根。
-
-DSH Desktop 领域建模：[模型源目录](../xrain-ontology/建模档案/tauri-deepseek-harness/) · [模型索引](../xrain-ontology/建模档案/tauri-deepseek-harness/模型索引.md)。按当前问题读取基础模型及增量，确认范围以模型为准；直接访问源文件，不依赖目录挂载。
+本工作空间交付 DSH Desktop。产品事实、源码位置与领域模型从 [DSH Desktop 项目入口](文档/项目/项目_atlas_dsh_desktop/AGENTS.md)按需加载。
 
 ## 启动
 

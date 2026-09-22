@@ -4,7 +4,7 @@ Status: Active
 Kind: CurrentDesign
 Scope: atlas-dsh-desktop / Windows x64 桌面宿主与私有运行时
 Owner: 项目维护者
-Updated: 2026-09-16
+Updated: 2026-09-22
 Depends On:
 - ProductContract.md
 
@@ -64,7 +64,7 @@ GitHub Release 工作流现只构建并发布自有 MSI，保留 Tag 构建器�
 
 ## 退出证据缺口与全树结束
 
-已核对官方 0.1.6-alpha.1：公开 agent 列表只能给局部 running 数，AppExit 没有完成回执，shutdown 有强制退出兜底；没有公开的全入口接纳、全部待完成工作或完整 dispose/flush 汇总。U1 仍未解决，宿主不能承诺完整正常退出。
+已核对官方 0.1.6-alpha.1：公开 agent 列表只能给局部 running 数，AppExit 没有完成回执，shutdown 有强制退出兜底；没有公开的全入口接纳、全部待完成工作或完整 dispose/flush 汇总。[基础模型中的 U1（退出事实的实现证据）](../../../../xrain-ontology/建模档案/tauri-deepseek-harness/领域模型.md#s4-未知与确认范围)仍未解决，宿主不能承诺完整正常退出。
 
 bridge 协议 2 如实返回这些事实为未知，running agent 仅作为观察值。beginDrain/appExit 明确返回证据不可用，不伪造局部 draining，不调用缺少收尾证明的退出钩子。未知不按零处理。
 
@@ -76,4 +76,4 @@ Job Object 的全树结束与正常收尾彼此独立。根退出不能替代树
 
 Rust 定向测试覆盖旧指针、错误目标保留状态和数据、路径归属、防降级、固定版本、具体确认与新 staged 并存、实际 Windows 根退出/子进程存活及整树终止。bridge 测试覆盖未知事实、零 running 不等于无工作、拒绝虚假 drain/exit。源码检查必须包含非 test 宿主路径；安装交互检查原生入口与官方页面。
 
-这些是 Development 证据，不替代独立 SystemTest 或 Deployment，也不补齐 U1。上游将来提供权威接口时，须核对该具体发行的事实语义后接入，不能仅增加字段或 mock 声称完整退出已实现。
+这些是 Development 证据，不替代独立 SystemTest 或 Deployment，也不补齐上述退出事实缺口。上游将来提供权威接口时，须核对该具体发行的事实语义后接入，不能仅增加字段或 mock 声称完整退出已实现。
