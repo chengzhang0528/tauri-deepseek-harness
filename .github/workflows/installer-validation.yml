@@ -1,0 +1,64 @@
+name: Validate Windows installer
+
+on:
+  push:
+    branches: [main]
+    paths: ['src-tauri/**', 'scripts/**', 'package*.json', 'version.json', '.github/workflows/installer-validation.yml', '.github/scripts/verify-installer.ps1']
+  pull_request:
+    paths: ['src-tauri/**', 'scripts/**', 'package*.json', 'version.json', '.github/workflows/installer-validation.yml', '.github/scripts/verify-installer.ps1']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer:
+    name: Build, upgrade and uninstall MSI
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-toolchain
+      - name: Add compiler to PATH
+        shell: msys2 {0}
+        run: cygpath -w /mingw64/bin >> "$GITHUB_PATH"
+      - run: rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+      - run: npm ci
+      - run: npm run check:version
+      - run: npm run test:bridge
+      - run: npm run test:runtime-build
+      - run: npm run test:release-tag
+      - run: npm run test:runtime-publish
+      - name: Build two candidate versions
+        shell: pwsh
+        run: |
+          $base = [version]((Get-Content -Raw version.json | ConvertFrom-Json).launcherVersion)
+          $next = "$($base.Major).$($base.Minor).$($base.Build + 1)"
+          $bundle = 'src-tauri/target/x86_64-pc-windows-gnu/release/bundle/msi'
+          npm run build:msi
+          if ($LASTEXITCODE -ne 0) { throw 'Initial MSI build failed.' }
+          $old = @(Get-ChildItem -LiteralPath $bundle -Filter '*.msi' -File)
+          if ($old.Count -ne 1) { throw "Expected one initial MSI, found $($old.Count)." }
+          Copy-Item -LiteralPath $old[0].FullName -Destination "$env:RUNNER_TEMP/dsh-old.msi"
+          Remove-Item -LiteralPath $old[0].FullName
+          npm run build:msi -- --release-version $next
+          if ($LASTEXITCODE -ne 0) { throw 'Upgrade MSI build failed.' }
+          $new = @(Get-ChildItem -LiteralPath $bundle -Filter '*.msi' -File)
+          if ($new.Count -ne 1) { throw "Expected one upgrade MSI, found $($new.Count)." }
+          Copy-Item -LiteralPath $new[0].FullName -Destination "$env:RUNNER_TEMP/dsh-new.msi"
+      - name: Check install, upgrade, user data and uninstall
+        shell: pwsh
+        run: .github/scripts/verify-installer.ps1 -OldMSI "$env:RUNNER_TEMP/dsh-old.msi" -NewMSI "$env:RUNNER_TEMP/dsh-new.msi"
