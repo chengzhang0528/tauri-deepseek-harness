@@ -9,7 +9,8 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
 }
 
 function Invoke-Msi([string]$operation, [string]$package) {
-    $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @($operation, ('"' + $package + '"'), '/qn', '/norestart', 'AUTOLAUNCHAPP=0') -WindowStyle Hidden -Wait -PassThru
+    $nativePackage = (Resolve-Path -LiteralPath $package).Path
+    $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @($operation, ('"' + $nativePackage + '"'), '/qn', '/norestart', 'AUTOLAUNCHAPP=0') -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "MSI operation $operation failed with exit code $($process.ExitCode)." }
 }
 
